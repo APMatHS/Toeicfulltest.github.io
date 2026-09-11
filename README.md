@@ -1,8 +1,8 @@
-# TOEIC Full Test — V1.2
+# TOEIC Full Test — V1.3
 
 Bản này dùng Supabase hiện tại và được thiết kế cho nhập đề TOEIC từ PDF nhanh, an toàn khi thi thật.
 
-## Mới trong V1.2
+## Mới trong V1.3
 
 - Giảng viên/System Admin có trang Hồ sơ:
   - tự đổi mật khẩu;
@@ -45,6 +45,22 @@ Bản này dùng Supabase hiện tại và được thiết kế cho nhập đ�
   - nhớ câu đang làm sau reload;
   - deadline vẫn do server quyết định.
 - Chống gian lận dùng event UUID để giảm nguy cơ đếm trùng.
+
+
+### Giao diện “đóng băng” giữa các tab của bài kiểm tra
+
+- `Tổng quan / LIVE / Bài làm / Soạn đề / Cài đặt` được giữ sống trong cùng một workspace.
+- Chuyển tab chỉ ẩn/hiện panel, **không hủy DOM và không gọi tải lại toàn trang**.
+- Quay lại tab trước giữ nguyên gần như tuyệt đối:
+  - vị trí cuộn;
+  - form đang nhập;
+  - vùng đang mở;
+  - bộ lọc LIVE;
+  - nội dung đã render.
+- LIVE chỉ tải lần đầu, sau đó tiếp tục nhận Realtime ngầm kể cả khi đang xem tab khác.
+- Bài làm chỉ tải lần đầu trong phiên workspace; quay lại không hiện “Đang tải…” nữa.
+- URL vẫn thay đổi theo tab và nút Back/Forward vẫn hoạt động.
+- Chỉ dựng lại workspace khi có thay đổi dữ liệu thật sự như thêm/sửa câu, thêm stimulus, xuất bản/đóng bài, F5 hoặc đổi sang bài kiểm tra khác.
 
 ## Import sinh viên
 

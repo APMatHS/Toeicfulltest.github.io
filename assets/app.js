@@ -20,6 +20,7 @@ let suppressFullscreenViolation = false;
 let liveChannel = null;
 let authorDraftTimer = null;
 let answerFlushBusy = false;
+let testWorkspace = null;
 
 const esc = (s="") => String(s).replace(/[&<>"']/g, m => ({
   "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
@@ -114,6 +115,12 @@ async function boot(){
   });
 
   addEventListener("hashchange", render);
+  addEventListener("popstate", ()=>{
+    const p=route();
+    if(p.startsWith("/test/") && testWorkspace?.id===p.split("/")[2] && document.querySelector("#testWorkspace")){
+      activateTestTab(testWorkspace.id,p.split("/")[3]||"overview",{push:false,restore:true});
+    }else render();
+  });
   render();
 }
 async function loadProfile(){
@@ -138,9 +145,13 @@ function renderHeader(){
 }
 async function render(){
   clearInterval(timerId); timerId=null;
-  clearLiveChannel();
-  renderHeader();
   const p=route();
+  const targetTestId = p.startsWith("/test/") ? p.split("/")[2] : null;
+  if(!targetTestId || (testWorkspace && testWorkspace.id!==targetTestId)){
+    clearLiveChannel();
+    testWorkspace = null;
+  }
+  renderHeader();
 
   if(p.startsWith("/exam/")) return renderExam(p.split("/")[2]);
   if(p.startsWith("/result/")) return renderResult(p.split("/")[2]);
@@ -503,14 +514,62 @@ async function openNewTest(){
 
 function testTabs(testId,active){
   const items=[["overview","Tổng quan"],["live","LIVE"],["submissions","Bài làm"],["authoring","Soạn đề"],["settings","Cài đặt"]];
-  return `<div class="tabs test-tabs">${items.map(([k,l])=>`<a class="btn tab ${active===k?"active":""}" href="#/test/${testId}/${k}">${l}</a>`).join("")}</div>`;
+  return `<div class="tabs test-tabs">${items.map(([k,l])=>`<button type="button" class="btn tab test-tab-btn ${active===k?"active":""}" data-tab="${k}" data-test="${testId}">${l}</button>`).join("")}</div>`;
+}
+function saveWorkspaceTabScroll(){
+  if(!testWorkspace || !testWorkspace.activeTab) return;
+  testWorkspace.scrolls[testWorkspace.activeTab] = window.scrollY;
+  saveTestUi(testWorkspace.id,{tab:testWorkspace.activeTab,scrolls:testWorkspace.scrolls,scrollY:window.scrollY});
+}
+function setTestUrl(id,tab,push=true){
+  const next=`#/test/${id}/${tab}`;
+  if(location.hash===next) return;
+  if(push) history.pushState({testId:id,tab},"",next);
+  else history.replaceState({testId:id,tab},"",next);
+}
+async function activateTestTab(id,tab,{push=true,restore=true}={}){
+  if(!testWorkspace || testWorkspace.id!==id) return renderTestDetail(id,tab);
+  const valid=["overview","live","submissions","authoring","settings"];
+  if(!valid.includes(tab)) tab="overview";
+  saveWorkspaceTabScroll();
+  document.querySelectorAll(".test-panel").forEach(el=>el.hidden=el.dataset.panel!==tab);
+  document.querySelectorAll(".test-tab-btn").forEach(btn=>btn.classList.toggle("active",btn.dataset.tab===tab));
+  testWorkspace.activeTab=tab;
+  setTestUrl(id,tab,push);
+  if(tab==="live" && !testWorkspace.loaded.live){
+    testWorkspace.loaded.live=true;
+    await renderLiveTab(id);
+  }else if(tab==="submissions" && !testWorkspace.loaded.submissions){
+    testWorkspace.loaded.submissions=true;
+    await renderSubmissionsTab(id);
+  }
+  const target=(testWorkspace.scrolls?.[tab]??0);
+  if(restore) requestAnimationFrame(()=>window.scrollTo({top:target,behavior:"auto"}));
+}
+function invalidateTestWorkspace(id){
+  if(testWorkspace?.id===id){
+    saveWorkspaceTabScroll();
+    clearLiveChannel();
+    testWorkspace=null;
+  }
 }
 async function renderTestDetail(id,tab="overview"){
+  // If this test workspace is already mounted, changing tabs is a pure hide/show operation.
+  // No DOM is destroyed, no data is re-fetched, and scroll/form/filter state remains intact.
+  const mounted=document.querySelector(`#testWorkspace[data-test-id="${id}"]`);
+  if(testWorkspace?.id===id && mounted){
+    return activateTestTab(id,tab,{push:false,restore:true});
+  }
+
   showLoading();
   const {data,error}=await sb.rpc("get_test_authoring",{p_test_id:id});
   if(error){ view.innerHTML=`${staffNav("tests")}<div class="card">${esc(error.message)}</div>`; return; }
   const t=data.test, parts=data.parts||[], qs=data.questions||[], groups=data.stimulus_groups||[];
+  const draft=await getAuthorDraft(id);
+  const savedUi=readJSON(uiStateKey(id),{});
+  const scrolls=savedUi.scrolls||{authoring:savedUi.scrollY||0};
 
+  testWorkspace={id,data,t,parts,qs,groups,draft,activeTab:null,scrolls,loaded:{live:false,submissions:false},liveFilter:"all"};
   const head=`${staffNav("tests")}
   <section class="card">
     <div class="row between wrap">
@@ -522,18 +581,18 @@ async function renderTestDetail(id,tab="overview"){
   </section>
   ${testTabs(id,tab)}`;
 
-  if(tab==="live"){
-    view.innerHTML=head+`<section id="liveRoot" class="card"><div class="muted">Đang tải LIVE…</div></section>`;
-    bindTestHeaderActions(id,t);
-    return renderLiveTab(id);
-  }
-  if(tab==="submissions"){
-    view.innerHTML=head+`<section id="submissionsRoot" class="card"><div class="muted">Đang tải bài làm…</div></section>`;
-    bindTestHeaderActions(id,t);
-    return renderSubmissionsTab(id);
-  }
-  if(tab==="settings"){
-    view.innerHTML=head+`<section class="card"><h2>Cài đặt</h2>
+  const overview=`<section class="test-panel" data-panel="overview">
+    <section class="grid grid-3 part-summary">${parts.map(p=>`<div class="card"><h3>${esc(p.title)}</h3><div class="muted">${esc(p.shuffle_mode)}</div><div class="kpi">${qs.filter(q=>q.part_no===p.part_no).length}</div><div class="muted">câu hỏi</div></div>`).join("")}</section>
+    <section class="grid grid-3 overview-actions">
+      <button class="card card-link frozen-link" data-go-tab="live"><h3>LIVE</h3><p class="muted">Theo dõi đang làm, đã nộp, tiến độ và vi phạm gần thời gian thực.</p></button>
+      <button class="card card-link frozen-link" data-go-tab="submissions"><h3>Bài làm</h3><p class="muted">Xem kết quả, đáp án và tải Excel.</p></button>
+      <button class="card card-link frozen-link" data-go-tab="authoring"><h3>Soạn đề</h3><p class="muted">Autosave nháp, paste ảnh và phục hồi đúng vị trí.</p></button>
+    </section>
+  </section>`;
+  const live=`<section class="test-panel" data-panel="live" hidden><section id="liveRoot" class="card"><div class="muted">LIVE sẽ tải một lần khi mở lần đầu.</div></section></section>`;
+  const submissions=`<section class="test-panel" data-panel="submissions" hidden><section id="submissionsRoot" class="card"><div class="muted">Bài làm sẽ tải một lần khi mở lần đầu.</div></section></section>`;
+  const authoring=`<section class="test-panel" data-panel="authoring" hidden>${renderAuthoringMarkup(id,parts,qs,groups,draft)}</section>`;
+  const settings=`<section class="test-panel" data-panel="settings" hidden><section class="card"><h2>Cài đặt</h2>
       <div class="grid grid-2 settings-grid">
         <div><div class="muted">Thời lượng</div><b>${t.duration_minutes} phút</b></div>
         <div><div class="muted">Số lượt làm</div><b>${t.max_attempts}</b></div>
@@ -541,29 +600,18 @@ async function renderTestDetail(id,tab="overview"){
         <div><div class="muted">Đóng lúc</div><b>${fmt(t.closes_at)}</b></div>
         <div><div class="muted">Chống gian lận</div><b>${esc(t.anti_cheat_mode)}</b></div>
         <div><div class="muted">Xem đáp án sau nộp</div><b>${t.show_answers_after_submit?"Có":"Không"}</b></div>
-      </div></section>`;
-    bindTestHeaderActions(id,t); return;
-  }
-  if(tab==="authoring"){
-    const draft=await getAuthorDraft(id);
-    view.innerHTML=head+renderAuthoringMarkup(id,parts,qs,groups,draft);
-    bindTestHeaderActions(id,t);
-    bindAuthoringActions(id,parts,qs,groups,draft);
-    const ui=readJSON(uiStateKey(id),{});
-    requestAnimationFrame(()=>window.scrollTo({top:ui.scrollY||0}));
-    const remember=debounce(()=>saveTestUi(id,{tab:"authoring",scrollY:window.scrollY}),180);
-    window.addEventListener("scroll",remember,{passive:true,once:false});
-    return;
-  }
+      </div></section></section>`;
 
-  view.innerHTML=head+`
-  <section class="grid grid-3 part-summary">${parts.map(p=>`<div class="card"><h3>${esc(p.title)}</h3><div class="muted">${esc(p.shuffle_mode)}</div><div class="kpi">${qs.filter(q=>q.part_no===p.part_no).length}</div><div class="muted">câu hỏi</div></div>`).join("")}</section>
-  <section class="grid grid-3 overview-actions">
-    <a class="card card-link" href="#/test/${id}/live"><h3>LIVE</h3><p class="muted">Theo dõi đang làm, đã nộp, tiến độ và vi phạm gần thời gian thực.</p></a>
-    <a class="card card-link" href="#/test/${id}/submissions"><h3>Bài làm</h3><p class="muted">Xem kết quả, đáp án và tải Excel.</p></a>
-    <a class="card card-link" href="#/test/${id}/authoring"><h3>Soạn đề</h3><p class="muted">Autosave nháp, paste ảnh và phục hồi đúng vị trí.</p></a>
-  </section>`;
+  view.innerHTML=`<div id="testWorkspace" data-test-id="${id}">${head}${overview}${live}${submissions}${authoring}${settings}</div>`;
   bindTestHeaderActions(id,t);
+  bindAuthoringActions(id,parts,qs,groups,draft);
+  document.querySelectorAll(".test-tab-btn").forEach(btn=>btn.onclick=()=>activateTestTab(id,btn.dataset.tab,{push:true,restore:true}));
+  document.querySelectorAll("[data-go-tab]").forEach(btn=>btn.onclick=()=>activateTestTab(id,btn.dataset.goTab,{push:true,restore:true}));
+  window.addEventListener("scroll",()=>{
+    if(!testWorkspace || testWorkspace.id!==id) return;
+    testWorkspace.scrolls[testWorkspace.activeTab]=window.scrollY;
+  },{passive:true});
+  await activateTestTab(id,tab,{push:false,restore:true});
 }
 function bindTestHeaderActions(id,t){
   document.querySelector("#publishBtn")?.addEventListener("click",async()=>{
@@ -571,6 +619,7 @@ function bindTestHeaderActions(id,t){
     const {error}=await sb.rpc("staff_upsert_test",{p_data:{id:t.id,status:next}});
     if(error) return toast(error.message);
     toast(next==="published"?"Đã xuất bản":"Đã đóng bài");
+    invalidateTestWorkspace(id);
     renderTestDetail(id,route().split("/")[3]||"overview");
   });
   document.querySelector("#exportExcelTop")?.addEventListener("click",()=>exportTestExcel(id));
@@ -607,7 +656,7 @@ function bindAuthoringActions(id,parts,qs,groups,draft){
     const q=qs.find(x=>x.id===b.dataset.id);
     b.onclick=()=>openQuestionEditor(id,q.test_part_id,q.part_no,groups,q);
   });
-  document.querySelector("#discardDraft")?.addEventListener("click",async()=>{await clearAuthorDraft(id);toast("Đã bỏ bản nháp");renderTestDetail(id,"authoring")});
+  document.querySelector("#discardDraft")?.addEventListener("click",async()=>{await clearAuthorDraft(id);toast("Đã bỏ bản nháp");invalidateTestWorkspace(id);renderTestDetail(id,"authoring")});
   document.querySelector("#restoreDraft")?.addEventListener("click",()=>{
     if(!draft) return;
     if(draft.kind==="question"){
@@ -632,19 +681,20 @@ async function renderLiveTab(testId){
     const root=document.querySelector("#liveRoot"); if(!root) return;
     root.innerHTML=`<div class="row between wrap"><div><h2>LIVE</h2><p class="muted">Tự cập nhật khi sinh viên làm bài.</p></div><button class="secondary" id="liveExcel">↓ Excel hiện tại</button></div>
     <div class="live-kpis">${[["Tổng",counts.total],["Đang làm",counts.in],["Đã nộp",counts.done],["Chưa vào",counts.none],["Có vi phạm",counts.viol]].map(([a,b])=>`<div><span>${a}</span><b>${b}</b></div>`).join("")}</div>
-    <div class="row wrap live-filters">${["all","in_progress","done","none","viol"].map((k,i)=>`<button class="${i===0?"primary":"secondary"} sm live-filter" data-filter="${k}">${({all:"Tất cả",in_progress:"Đang làm",done:"Đã nộp",none:"Chưa làm",viol:"Có vi phạm"})[k]}</button>`).join("")}</div>
+    <div class="row wrap live-filters">${["all","in_progress","done","none","viol"].map(k=>`<button class="${(testWorkspace?.liveFilter||"all")===k?"primary":"secondary"} sm live-filter" data-filter="${k}">${({all:"Tất cả",in_progress:"Đang làm",done:"Đã nộp",none:"Chưa làm",viol:"Có vi phạm"})[k]}</button>`).join("")}</div>
     <div class="table-wrap"><table id="liveTable"><thead><tr><th>Họ tên</th><th>MSSV</th><th>Trạng thái</th><th>Tiến độ</th><th>Bắt đầu</th><th>Còn lại</th><th>Vi phạm</th><th>Điểm</th></tr></thead>
     <tbody>${rows.map(r=>liveRow(r)).join("")||`<tr><td colspan="8" class="empty">Lớp chưa có sinh viên.</td></tr>`}</tbody></table></div>`;
     root.dataset.rows=JSON.stringify(rows);
     document.querySelector("#liveExcel").onclick=()=>exportTestExcel(testId);
-    document.querySelectorAll(".live-filter").forEach(btn=>btn.onclick=()=>{
-      document.querySelectorAll(".live-filter").forEach(x=>x.className="secondary sm live-filter");
-      btn.className="primary sm live-filter";
-      const f=btn.dataset.filter;
+    const applyLiveFilter=(f)=>{
+      if(testWorkspace?.id===testId) testWorkspace.liveFilter=f;
+      document.querySelectorAll(".live-filter").forEach(x=>x.className=`${x.dataset.filter===f?"primary":"secondary"} sm live-filter`);
       document.querySelector("#liveTable tbody").innerHTML=rows.filter(r=>
         f==="all" || (f==="in_progress"&&r.status==="in_progress") || (f==="done"&&["submitted","auto_submitted"].includes(r.status)) || (f==="none"&&!r.attempt_id) || (f==="viol"&&(r.violation_count||0)>0)
       ).map(liveRow).join("")||`<tr><td colspan="8" class="empty">Không có dữ liệu.</td></tr>`;
-    });
+    };
+    document.querySelectorAll(".live-filter").forEach(btn=>btn.onclick=()=>applyLiveFilter(btn.dataset.filter));
+    applyLiveFilter(testWorkspace?.liveFilter||"all");
   };
   await load();
   let pending=null;
@@ -808,7 +858,7 @@ function openGroupEditor(testId, partId, partNo, draft=null){
     }});
     if(error) return toast(error.message);
     await clearAuthorDraft(testId);
-    closeModal(); toast("Đã tạo nhóm nội dung"); renderTestDetail(testId,"authoring");
+    closeModal(); toast("Đã tạo nhóm nội dung"); invalidateTestWorkspace(testId); renderTestDetail(testId,"authoring");
   };
 }
 function openStimulusEditor(testId, groupId, draft=null){
@@ -848,7 +898,7 @@ function openStimulusEditor(testId, groupId, draft=null){
     const {error}=await sb.rpc("staff_upsert_stimulus",{p_data:payload});
     if(error) return toast(error.message);
     await clearAuthorDraft(testId);
-    closeModal(); toast("Đã thêm nội dung chung"); renderTestDetail(testId,"authoring");
+    closeModal(); toast("Đã thêm nội dung chung"); invalidateTestWorkspace(testId); renderTestDetail(testId,"authoring");
   };
 }
 function openQuestionEditor(testId, partId, partNo, allGroups, existing=null, draft=null){
@@ -915,6 +965,7 @@ function openQuestionEditor(testId, partId, partNo, allGroups, existing=null, dr
       await clearAuthorDraft(testId);
       closeModal(); toast(existing?"Đã lưu câu hỏi":"Đã thêm câu hỏi");
       saveTestUi(testId,{tab:"authoring",scrollY:window.scrollY});
+      invalidateTestWorkspace(testId);
       renderTestDetail(testId,"authoring");
     }catch(err){toast(err.message,6000)}
     finally{btn.disabled=false;btn.textContent=existing?"Lưu thay đổi":"Thêm câu hỏi";}
