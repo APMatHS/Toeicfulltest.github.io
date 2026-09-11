@@ -1,34 +1,56 @@
-# TOEIC Full Test
+# TOEIC Full Test — V1.1
 
-Ứng dụng GitHub Pages + Supabase cho bài kiểm tra TOEIC Reading.
+Bản V1.1 cho GitHub Pages, dùng Supabase project hiện tại.
 
-## V1 hiện có
-- Supabase Auth với 3 vai trò: `system_admin`, `teacher`, `student`.
-- Giáo viên tạo Student/Teacher qua Edge Function `manage-user`.
-- Quản lý lớp và bài kiểm tra.
-- Tạo bài mặc định 75 phút, 1 lượt, hiện đáp án sau khi nộp.
-- Part 5: `shuffle_questions`; Part 6: `shuffle_stimulus_groups`; Part 7: `fixed`.
-- Đồng hồ dựa trên `expires_at` phía server.
-- Lưu đáp án qua RPC.
-- Chống gian lận: lần 1 cảnh báo, lần 2 tự nộp.
-- Kết quả hiển thị ngay sau khi nộp.
+## Điểm mới
+- Sửa luồng Auth/render để tránh màn hình trắng sau đăng nhập.
+- Tạo tài khoản từng người, có gán lớp.
+- Nhập danh sách sinh viên từ Excel/CSV với 4 cột: `Họ tên`, `MSSV`, `Email`, `Password`.
+- Password chỉ dùng để tạo Supabase Auth, không lưu plaintext trong bảng `profiles`.
+- Soạn đề trực tiếp:
+  - nhóm nội dung dùng chung cho nhiều câu;
+  - stimulus dạng text / ảnh / audio;
+  - câu hỏi có thể gắn ảnh hoặc audio;
+  - từng đáp án A/B/C/D có thể gắn ảnh hoặc audio.
+- Kiến trúc sẵn sàng cho Listening: một audio có thể nằm ở Stimulus Group và dùng chung nhiều câu.
+- Student exam render được ảnh/audio ở stimulus, câu hỏi và đáp án.
+- Anti-cheat có `tab_hidden`, `window_blur`, `fullscreen_exit`, có chống đếm trùng cơ bản.
+
+## Upload danh sách sinh viên
+Dùng file `.xlsx`, `.xls` hoặc `.csv`.
+
+Các tên cột được nhận:
+- Họ tên: `Họ tên`, `HoTen`, `name`, `full_name`
+- MSSV: `MSSV`, `Mã SV`, `student_code`
+- Email: `Email`
+- Password: `Password`, `Mật khẩu`
+
+Password tối thiểu 6 ký tự.
+
+## Media
+Storage bucket: `test-media`.
+
+V1.1 dùng:
+- `image/png`
+- `image/jpeg`
+- `image/webp`
+- `audio/mpeg`
+- `audio/mp4`
+- `audio/wav`
 
 ## Supabase
-Project ref: `ulnjhgrwqsxoidkzumwc`
+Backend đã được cập nhật cho V1.1:
+- `manage-user` V3 hỗ trợ `bulk_create_students`;
+- questions/choices có `media_type`, `storage_path`;
+- stimulus groups có cấu hình Listening cơ bản;
+- RPC authoring/payload đã trả media cho câu hỏi và đáp án.
 
-Storage: private bucket `test-media`.
-
-## Khởi tạo tài khoản đầu tiên
-Project đang dùng cơ chế bootstrap: Auth user đầu tiên sẽ trở thành `system_admin`.
-Tạo user đầu tiên trong Supabase Dashboard > Authentication > Users, sau đó đăng nhập trên web.
-
-## GitHub Pages
-Repo dự kiến: `Toeicfulltest/Toeicfulltest.github.io`.
-
-Các file cần đặt ở root:
+## Deploy GitHub Pages
+Upload toàn bộ nội dung ZIP vào root branch `main`, giữ nguyên cấu trúc:
 - `index.html`
+- `README.md`
+- `assets/app.js`
 - `assets/config.js`
 - `assets/styles.css`
-- `assets/app.js`
 
-Publishable key trong `config.js` là khóa công khai dành cho frontend; không dùng service-role key trong GitHub Pages.
+Sau đó reload trang bằng Ctrl+F5 nếu browser còn cache bản cũ.
