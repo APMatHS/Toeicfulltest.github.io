@@ -17,9 +17,15 @@ function statusBadge(s){let c=s==="published"||s==="submitted"?"ok":s==="in_prog
 async function boot(){
   const {data}=await sb.auth.getSession();session=data.session;
   if(session) await loadProfile();
-  sb.auth.onAuthStateChange(async(_e,s)=>{session=s;profile=null;if(s)await loadProfile();render()});
-  addEventListener("hashchange",render);render();
-}
+ sb.auth.onAuthStateChange((_e,s)=>{
+  session=s;
+  profile=null;
+
+  setTimeout(async ()=>{
+    if(s) await loadProfile();
+    render();
+  },0);
+});
 async function loadProfile(){
   const {data,error}=await sb.from("profiles").select("*").eq("id",session.user.id).single();
   if(error){console.error(error);return} profile=data;
