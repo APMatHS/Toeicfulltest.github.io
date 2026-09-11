@@ -17,6 +17,9 @@ let antiCheatBound = false;
 let lastViolationAt = 0;
 let fullscreenWasEntered = false;
 let suppressFullscreenViolation = false;
+let liveChannel = null;
+let authorDraftTimer = null;
+let answerFlushBusy = false;
 
 const esc = (s="") => String(s).replace(/[&<>"']/g, m => ({
   "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
@@ -34,6 +37,43 @@ function toast(msg, ms=3600){
   toastEl._t = setTimeout(()=>toastEl.hidden=true, ms);
 }
 function closeModal(){ modalRoot.innerHTML = ""; }
+function clearLiveChannel(){
+  if(liveChannel){ try{ sb.removeChannel(liveChannel); }catch{} liveChannel=null; }
+}
+function uiStateKey(testId){ return `toeic.ui.${session?.user?.id||"anon"}.${testId}`; }
+function authorDraftKey(testId){ return `toeic.authorDraft.${session?.user?.id||"anon"}.${testId}`; }
+function attemptQueueKey(attemptId){ return `toeic.answerQueue.${attemptId}`; }
+function attemptUiKey(attemptId){ return `toeic.attemptUi.${attemptId}`; }
+function readJSON(key,fallback=null){ try{return JSON.parse(localStorage.getItem(key)) ?? fallback}catch{return fallback} }
+function writeJSON(key,val){ localStorage.setItem(key,JSON.stringify(val)); }
+function saveTestUi(testId, patch={}){
+  const old=readJSON(uiStateKey(testId),{});
+  writeJSON(uiStateKey(testId),{...old,...patch,updated_at:Date.now()});
+}
+function saveAuthorDraftLocal(testId,state){
+  const payload={...state,updated_at:new Date().toISOString()};
+  writeJSON(authorDraftKey(testId),payload);
+  clearTimeout(authorDraftTimer);
+  authorDraftTimer=setTimeout(async()=>{
+    try{
+      await sb.from("authoring_drafts").upsert({user_id:session.user.id,test_id:testId,state:payload,updated_at:new Date().toISOString()});
+      const el=document.querySelector("#draftStatus"); if(el) el.textContent="Đã lưu nháp";
+    }catch(err){ console.error(err); }
+  },900);
+  const el=document.querySelector("#draftStatus"); if(el) el.textContent="Đang lưu nháp…";
+}
+async function getAuthorDraft(testId){
+  const local=readJSON(authorDraftKey(testId),null);
+  if(local) return local;
+  const {data}=await sb.from("authoring_drafts").select("state").eq("user_id",session.user.id).eq("test_id",testId).maybeSingle();
+  if(data?.state){ writeJSON(authorDraftKey(testId),data.state); return data.state; }
+  return null;
+}
+async function clearAuthorDraft(testId){
+  localStorage.removeItem(authorDraftKey(testId));
+  await sb.from("authoring_drafts").delete().eq("user_id",session.user.id).eq("test_id",testId);
+}
+function debounce(fn,ms=350){ let t; return (...args)=>{clearTimeout(t);t=setTimeout(()=>fn(...args),ms)}; }
 function fileExt(name=""){ return name.includes(".") ? "."+name.split(".").pop().toLowerCase() : ""; }
 function mediaTypeFromFile(file){
   if(!file) return null;
@@ -88,27 +128,33 @@ function renderHeader(){
     return;
   }
   sessionActions.innerHTML = `
-    <span class="user-name small">${esc(profile?.full_name || session.user.email)} · ${esc(roleLabel(profile?.role||""))}</span>
+    <a class="user-name small profile-link" href="#/profile" title="Hồ sơ">${esc(profile?.full_name || session.user.email)} · ${esc(roleLabel(profile?.role||""))}</a>
     <button class="ghost sm header-btn" id="logoutBtn">Đăng xuất</button>`;
   document.querySelector("#logoutBtn")?.addEventListener("click", async()=>{
+    clearLiveChannel();
     await sb.auth.signOut();
     go("/");
   });
 }
 async function render(){
   clearInterval(timerId); timerId=null;
+  clearLiveChannel();
   renderHeader();
   const p=route();
 
   if(p.startsWith("/exam/")) return renderExam(p.split("/")[2]);
   if(p.startsWith("/result/")) return renderResult(p.split("/")[2]);
   if(p==="/login") return renderLogin();
+  if(p==="/profile") return session ? renderProfile() : go("/login");
   if(p==="/teacher") return requireStaff(renderTeacher);
   if(p==="/student") return requireStudent(renderStudent);
   if(p==="/accounts") return requireStaff(renderAccounts);
   if(p==="/classes") return requireStaff(renderClasses);
   if(p==="/tests") return requireStaff(renderTests);
-  if(p.startsWith("/test/")) return requireStaff(()=>renderTestDetail(p.split("/")[2]));
+  if(p.startsWith("/test/")){
+    const bits=p.split("/");
+    return requireStaff(()=>renderTestDetail(bits[2],bits[3]||"overview"));
+  }
   return renderHome();
 }
 function requireStaff(fn){
@@ -167,6 +213,52 @@ function renderLogin(){
     const {error}=await sb.auth.signInWithPassword({email:f.get("email"),password:f.get("password")});
     btn.disabled=false; btn.textContent="Đăng nhập";
     if(error) toast(error.message);
+  };
+}
+
+
+async function renderProfile(){
+  if(!profile) return showLoading("Đang tải hồ sơ...");
+  const canRename=["teacher","system_admin"].includes(profile.role);
+  view.innerHTML=`<section class="card profile-card">
+    <a class="muted" href="${profile.role==="student"?"#/student":"#/teacher"}">← Quay lại</a>
+    <h1>Hồ sơ</h1>
+    <div class="profile-grid">
+      <form id="profileNameForm" class="stack">
+        <h3>Thông tin cá nhân</h3>
+        <label>Họ và tên<input name="full_name" value="${esc(profile.full_name||"")}" ${canRename?"":"disabled"}></label>
+        <label>Email<input value="${esc(session.user.email||"")}" disabled></label>
+        ${profile.student_code?`<label>MSSV<input value="${esc(profile.student_code)}" disabled></label>`:""}
+        ${canRename?`<button class="primary">Lưu tên</button>`:`<p class="muted">Sinh viên không tự thay đổi họ tên/MSSV.</p>`}
+      </form>
+      <form id="passwordForm" class="stack">
+        <h3>Đổi mật khẩu</h3>
+        <label>Mật khẩu mới<input type="password" name="p1" minlength="6" required autocomplete="new-password"></label>
+        <label>Nhập lại mật khẩu<input type="password" name="p2" minlength="6" required autocomplete="new-password"></label>
+        <button class="primary">Đổi mật khẩu</button>
+      </form>
+    </div>
+  </section>`;
+  if(canRename){
+    document.querySelector("#profileNameForm").onsubmit=async e=>{
+      e.preventDefault();
+      const name=new FormData(e.target).get("full_name");
+      const {data,error}=await sb.rpc("update_own_profile",{p_full_name:name});
+      if(error) return toast(error.message);
+      profile.full_name=data.full_name;
+      renderHeader(); toast("Đã đổi tên");
+    };
+  }
+  document.querySelector("#passwordForm").onsubmit=async e=>{
+    e.preventDefault();
+    const f=new FormData(e.target),p1=String(f.get("p1")||""),p2=String(f.get("p2")||"");
+    if(p1.length<6) return toast("Mật khẩu tối thiểu 6 ký tự.");
+    if(p1!==p2) return toast("Hai mật khẩu chưa trùng nhau.");
+    const btn=e.target.querySelector("button");btn.disabled=true;btn.textContent="Đang đổi...";
+    const {error}=await sb.auth.updateUser({password:p1});
+    btn.disabled=false;btn.textContent="Đổi mật khẩu";
+    if(error) return toast(error.message);
+    e.target.reset();toast("Đã đổi mật khẩu");
   };
 }
 
@@ -408,30 +500,86 @@ async function openNewTest(){
   };
 }
 
-async function renderTestDetail(id){
+
+function testTabs(testId,active){
+  const items=[["overview","Tổng quan"],["live","LIVE"],["submissions","Bài làm"],["authoring","Soạn đề"],["settings","Cài đặt"]];
+  return `<div class="tabs test-tabs">${items.map(([k,l])=>`<a class="btn tab ${active===k?"active":""}" href="#/test/${testId}/${k}">${l}</a>`).join("")}</div>`;
+}
+async function renderTestDetail(id,tab="overview"){
   showLoading();
   const {data,error}=await sb.rpc("get_test_authoring",{p_test_id:id});
   if(error){ view.innerHTML=`${staffNav("tests")}<div class="card">${esc(error.message)}</div>`; return; }
   const t=data.test, parts=data.parts||[], qs=data.questions||[], groups=data.stimulus_groups||[];
-  const groupMap=Object.fromEntries(groups.map(g=>[g.id,g]));
 
-  view.innerHTML=`${staffNav("tests")}
+  const head=`${staffNav("tests")}
   <section class="card">
     <div class="row between wrap">
       <div><a href="#/tests" class="muted">← Danh sách</a><h1>${esc(t.title)}</h1>
-        <div class="row wrap">${statusBadge(t.status)}<span class="badge">${t.duration_minutes} phút</span><span class="badge">${qs.length}/100 câu</span></div>
+        <div class="row wrap">${statusBadge(t.status)}<span class="badge">${t.duration_minutes} phút</span><span class="badge">${qs.length} câu</span></div>
       </div>
-      <button id="publishBtn" class="${t.status==="published"?"secondary":"primary"}">${t.status==="published"?"Đóng bài":"Xuất bản"}</button>
+      <div class="row wrap"><button class="secondary" id="exportExcelTop">↓ Excel</button><button id="publishBtn" class="${t.status==="published"?"secondary":"primary"}">${t.status==="published"?"Đóng bài":"Xuất bản"}</button></div>
     </div>
   </section>
+  ${testTabs(id,tab)}`;
 
-  <section class="grid grid-3 part-summary">
-    ${parts.map(p=>`<div class="card"><h3>${esc(p.title)}</h3><div class="muted">${esc(p.shuffle_mode)}</div><div class="kpi">${qs.filter(q=>q.part_no===p.part_no).length}</div><div class="muted">câu hỏi</div></div>`).join("")}
-  </section>
+  if(tab==="live"){
+    view.innerHTML=head+`<section id="liveRoot" class="card"><div class="muted">Đang tải LIVE…</div></section>`;
+    bindTestHeaderActions(id,t);
+    return renderLiveTab(id);
+  }
+  if(tab==="submissions"){
+    view.innerHTML=head+`<section id="submissionsRoot" class="card"><div class="muted">Đang tải bài làm…</div></section>`;
+    bindTestHeaderActions(id,t);
+    return renderSubmissionsTab(id);
+  }
+  if(tab==="settings"){
+    view.innerHTML=head+`<section class="card"><h2>Cài đặt</h2>
+      <div class="grid grid-2 settings-grid">
+        <div><div class="muted">Thời lượng</div><b>${t.duration_minutes} phút</b></div>
+        <div><div class="muted">Số lượt làm</div><b>${t.max_attempts}</b></div>
+        <div><div class="muted">Mở lúc</div><b>${fmt(t.opens_at)}</b></div>
+        <div><div class="muted">Đóng lúc</div><b>${fmt(t.closes_at)}</b></div>
+        <div><div class="muted">Chống gian lận</div><b>${esc(t.anti_cheat_mode)}</b></div>
+        <div><div class="muted">Xem đáp án sau nộp</div><b>${t.show_answers_after_submit?"Có":"Không"}</b></div>
+      </div></section>`;
+    bindTestHeaderActions(id,t); return;
+  }
+  if(tab==="authoring"){
+    const draft=await getAuthorDraft(id);
+    view.innerHTML=head+renderAuthoringMarkup(id,parts,qs,groups,draft);
+    bindTestHeaderActions(id,t);
+    bindAuthoringActions(id,parts,qs,groups,draft);
+    const ui=readJSON(uiStateKey(id),{});
+    requestAnimationFrame(()=>window.scrollTo({top:ui.scrollY||0}));
+    const remember=debounce(()=>saveTestUi(id,{tab:"authoring",scrollY:window.scrollY}),180);
+    window.addEventListener("scroll",remember,{passive:true,once:false});
+    return;
+  }
 
-  <section class="card authoring">
+  view.innerHTML=head+`
+  <section class="grid grid-3 part-summary">${parts.map(p=>`<div class="card"><h3>${esc(p.title)}</h3><div class="muted">${esc(p.shuffle_mode)}</div><div class="kpi">${qs.filter(q=>q.part_no===p.part_no).length}</div><div class="muted">câu hỏi</div></div>`).join("")}</section>
+  <section class="grid grid-3 overview-actions">
+    <a class="card card-link" href="#/test/${id}/live"><h3>LIVE</h3><p class="muted">Theo dõi đang làm, đã nộp, tiến độ và vi phạm gần thời gian thực.</p></a>
+    <a class="card card-link" href="#/test/${id}/submissions"><h3>Bài làm</h3><p class="muted">Xem kết quả, đáp án và tải Excel.</p></a>
+    <a class="card card-link" href="#/test/${id}/authoring"><h3>Soạn đề</h3><p class="muted">Autosave nháp, paste ảnh và phục hồi đúng vị trí.</p></a>
+  </section>`;
+  bindTestHeaderActions(id,t);
+}
+function bindTestHeaderActions(id,t){
+  document.querySelector("#publishBtn")?.addEventListener("click",async()=>{
+    const next=t.status==="published"?"closed":"published";
+    const {error}=await sb.rpc("staff_upsert_test",{p_data:{id:t.id,status:next}});
+    if(error) return toast(error.message);
+    toast(next==="published"?"Đã xuất bản":"Đã đóng bài");
+    renderTestDetail(id,route().split("/")[3]||"overview");
+  });
+  document.querySelector("#exportExcelTop")?.addEventListener("click",()=>exportTestExcel(id));
+}
+function renderAuthoringMarkup(id,parts,qs,groups,draft){
+  return `<section class="card authoring">
     <div class="row between wrap">
-      <div><h2>Soạn đề</h2><p class="muted">Nội dung chung (text/ảnh/audio) có thể dùng cho nhiều câu. Câu hỏi và từng đáp án cũng có thể gắn media.</p></div>
+      <div><h2>Soạn đề</h2><p class="muted">Nháp tự lưu. Ảnh có thể chọn file hoặc click vùng paste rồi Ctrl+V từ PDF/Snipping Tool.</p></div>
+      <div class="row wrap"><span id="draftStatus" class="muted">${draft?"Có bản nháp":"Đã đồng bộ"}</span>${draft?`<button class="secondary sm" id="restoreDraft">Khôi phục nháp</button><button class="ghost sm" id="discardDraft">Bỏ nháp</button>`:""}</div>
     </div>
     ${parts.map(p=>{
       const pGroups=groups.filter(g=>g.part_no===p.part_no);
@@ -450,13 +598,8 @@ async function renderTestDetail(id){
       </div>`;
     }).join("")}
   </section>`;
-
-  document.querySelector("#publishBtn").onclick=async()=>{
-    const next=t.status==="published"?"closed":"published";
-    const {error}=await sb.rpc("staff_upsert_test",{p_data:{id:t.id,status:next}});
-    if(error) return toast(error.message);
-    toast(next==="published"?"Đã xuất bản":"Đã đóng bài"); renderTestDetail(id);
-  };
+}
+function bindAuthoringActions(id,parts,qs,groups,draft){
   document.querySelectorAll(".add-group").forEach(b=>b.onclick=()=>openGroupEditor(id,b.dataset.part,+b.dataset.partno));
   document.querySelectorAll(".add-stimulus").forEach(b=>b.onclick=()=>openStimulusEditor(id,b.dataset.group));
   document.querySelectorAll(".add-question").forEach(b=>b.onclick=()=>openQuestionEditor(id,b.dataset.part,+b.dataset.partno,groups));
@@ -464,7 +607,101 @@ async function renderTestDetail(id){
     const q=qs.find(x=>x.id===b.dataset.id);
     b.onclick=()=>openQuestionEditor(id,q.test_part_id,q.part_no,groups,q);
   });
+  document.querySelector("#discardDraft")?.addEventListener("click",async()=>{await clearAuthorDraft(id);toast("Đã bỏ bản nháp");renderTestDetail(id,"authoring")});
+  document.querySelector("#restoreDraft")?.addEventListener("click",()=>{
+    if(!draft) return;
+    if(draft.kind==="question"){
+      const existing=draft.existingId?qs.find(q=>q.id===draft.existingId):null;
+      openQuestionEditor(id,draft.partId,draft.partNo,groups,existing,draft);
+    }else if(draft.kind==="stimulus") openStimulusEditor(id,draft.groupId,draft);
+    else if(draft.kind==="group") openGroupEditor(id,draft.partId,draft.partNo,draft);
+  });
 }
+async function renderLiveTab(testId){
+  const load=async()=>{
+    const {data,error}=await sb.rpc("staff_get_test_live",{p_test_id:testId});
+    if(error) return document.querySelector("#liveRoot").innerHTML=`<div class="warning-box">${esc(error.message)}</div>`;
+    const rows=data.rows||[];
+    const counts={
+      total:rows.length,
+      in:rows.filter(r=>r.status==="in_progress").length,
+      done:rows.filter(r=>["submitted","auto_submitted"].includes(r.status)).length,
+      none:rows.filter(r=>!r.attempt_id).length,
+      viol:rows.filter(r=>(r.violation_count||0)>0).length
+    };
+    const root=document.querySelector("#liveRoot"); if(!root) return;
+    root.innerHTML=`<div class="row between wrap"><div><h2>LIVE</h2><p class="muted">Tự cập nhật khi sinh viên làm bài.</p></div><button class="secondary" id="liveExcel">↓ Excel hiện tại</button></div>
+    <div class="live-kpis">${[["Tổng",counts.total],["Đang làm",counts.in],["Đã nộp",counts.done],["Chưa vào",counts.none],["Có vi phạm",counts.viol]].map(([a,b])=>`<div><span>${a}</span><b>${b}</b></div>`).join("")}</div>
+    <div class="row wrap live-filters">${["all","in_progress","done","none","viol"].map((k,i)=>`<button class="${i===0?"primary":"secondary"} sm live-filter" data-filter="${k}">${({all:"Tất cả",in_progress:"Đang làm",done:"Đã nộp",none:"Chưa làm",viol:"Có vi phạm"})[k]}</button>`).join("")}</div>
+    <div class="table-wrap"><table id="liveTable"><thead><tr><th>Họ tên</th><th>MSSV</th><th>Trạng thái</th><th>Tiến độ</th><th>Bắt đầu</th><th>Còn lại</th><th>Vi phạm</th><th>Điểm</th></tr></thead>
+    <tbody>${rows.map(r=>liveRow(r)).join("")||`<tr><td colspan="8" class="empty">Lớp chưa có sinh viên.</td></tr>`}</tbody></table></div>`;
+    root.dataset.rows=JSON.stringify(rows);
+    document.querySelector("#liveExcel").onclick=()=>exportTestExcel(testId);
+    document.querySelectorAll(".live-filter").forEach(btn=>btn.onclick=()=>{
+      document.querySelectorAll(".live-filter").forEach(x=>x.className="secondary sm live-filter");
+      btn.className="primary sm live-filter";
+      const f=btn.dataset.filter;
+      document.querySelector("#liveTable tbody").innerHTML=rows.filter(r=>
+        f==="all" || (f==="in_progress"&&r.status==="in_progress") || (f==="done"&&["submitted","auto_submitted"].includes(r.status)) || (f==="none"&&!r.attempt_id) || (f==="viol"&&(r.violation_count||0)>0)
+      ).map(liveRow).join("")||`<tr><td colspan="8" class="empty">Không có dữ liệu.</td></tr>`;
+    });
+  };
+  await load();
+  let pending=null;
+  const refresh=()=>{clearTimeout(pending);pending=setTimeout(load,450)};
+  liveChannel=sb.channel(`test-live-${testId}`)
+    .on("postgres_changes",{event:"*",schema:"public",table:"attempts",filter:`test_id=eq.${testId}`},refresh)
+    .on("postgres_changes",{event:"*",schema:"public",table:"answers"},refresh)
+    .on("postgres_changes",{event:"*",schema:"public",table:"anti_cheat_events"},refresh)
+    .subscribe();
+}
+function liveRow(r){
+  let remain="—";
+  if(r.status==="in_progress"&&r.expires_at){
+    const sec=Math.max(0,Math.floor((new Date(r.expires_at)-Date.now())/1000));
+    remain=`${Math.floor(sec/60)}:${String(sec%60).padStart(2,"0")}`;
+  }
+  const st=!r.attempt_id?"Chưa làm":r.status==="in_progress"?"Đang làm":r.status==="auto_submitted"?"Tự nộp":"Đã nộp";
+  return `<tr data-status="${esc(r.status||"none")}"><td>${r.attempt_id?`<a href="#/result/${r.attempt_id}">${esc(r.full_name)}</a>`:esc(r.full_name)}</td><td>${esc(r.student_code||"—")}</td><td>${st}</td><td>${r.answered_count||0}</td><td>${fmt(r.started_at)}</td><td>${remain}</td><td>${r.violation_count||0}</td><td>${r.correct_count==null?"—":r.correct_count}</td></tr>`;
+}
+async function renderSubmissionsTab(testId){
+  const {data,error}=await sb.rpc("staff_get_test_live",{p_test_id:testId});
+  const root=document.querySelector("#submissionsRoot");
+  if(error) return root.innerHTML=`<div class="warning-box">${esc(error.message)}</div>`;
+  const rows=data.rows||[];
+  root.innerHTML=`<div class="row between wrap"><div><h2>Bài làm sinh viên</h2><p class="muted">Có thể xem từng bài hoặc xuất toàn bộ kết quả.</p></div><button class="primary" id="subExcel">↓ Tải Excel</button></div>
+  <div class="table-wrap"><table><thead><tr><th>Họ tên</th><th>MSSV</th><th>Trạng thái</th><th>Bắt đầu</th><th>Nộp</th><th>Đúng</th><th>Vi phạm</th><th></th></tr></thead>
+  <tbody>${rows.map(r=>`<tr><td>${esc(r.full_name)}</td><td>${esc(r.student_code||"—")}</td><td>${r.attempt_id?statusBadge(r.status):'<span class="status off">Chưa làm</span>'}</td><td>${fmt(r.started_at)}</td><td>${fmt(r.submitted_at)}</td><td>${r.correct_count??"—"}</td><td>${r.violation_count||0}</td><td>${r.attempt_id?`<a class="btn secondary sm" href="#/result/${r.attempt_id}">Xem bài</a>`:""}</td></tr>`).join("")}</tbody></table></div>`;
+  document.querySelector("#subExcel").onclick=()=>exportTestExcel(testId);
+}
+async function exportTestExcel(testId){
+  toast("Đang tạo Excel…");
+  const {data,error}=await sb.rpc("staff_get_test_export",{p_test_id:testId});
+  if(error) return toast(error.message,6000);
+  const students=data.students||[];
+  const summary=students.map((s,i)=>({
+    STT:i+1,"Họ tên":s.full_name,MSSV:s.student_code||"","Trạng thái":s.status||"Chưa làm",
+    "Bắt đầu":s.started_at?new Date(s.started_at).toLocaleString("vi-VN"):"",
+    "Nộp bài":s.submitted_at?new Date(s.submitted_at).toLocaleString("vi-VN"):"",
+    "Số câu đúng":s.correct_count??"","Điểm":s.score??"","Vi phạm":s.violation_count||0,"Lý do nộp":s.submission_reason||""
+  }));
+  const detail=[];
+  for(const s of students) for(const a of s.answers||[]) detail.push({
+    "Họ tên":s.full_name,MSSV:s.student_code||"","Câu":a.number,"Đã chọn":a.selected||"","Đáp án":a.correct||"","Đúng/Sai":a.is_correct?"Đúng":"Sai"
+  });
+  const violations=[];
+  for(const s of students) for(const v of s.violations||[]) violations.push({
+    "Họ tên":s.full_name,MSSV:s.student_code||"","Sự kiện":v.event_type,"Lần":v.violation_number,"Thời điểm":new Date(v.occurred_at).toLocaleString("vi-VN")
+  });
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(summary),"Tong_hop");
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(detail),"Chi_tiet");
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(violations),"Vi_pham");
+  const safe=(data.test?.title||"ket-qua").replace(/[\\/:*?"<>|]+/g,"-");
+  XLSX.writeFile(wb,`${safe}.xlsx`);
+  toast("Đã tạo file Excel");
+}
+
 function questionAuthorRow(q){
   const media = q.storage_path ? (q.media_type==="audio"?" 🔊":" 🖼") : "";
   return `<div class="question-author-row">
@@ -472,137 +709,217 @@ function questionAuthorRow(q){
     <button class="secondary sm edit-question" data-id="${q.id}">Sửa</button>
   </div>`;
 }
-function openGroupEditor(testId, partId, partNo){
+
+function mediaPasteField(key,label,currentPath=null,currentType=null){
+  return `<div class="media-paste-field" data-media-key="${key}">
+    <div class="row between wrap"><b>${esc(label)}</b><span class="hint">Chọn file hoặc click vùng dưới rồi Ctrl+V ảnh</span></div>
+    <input class="media-file-input" data-key="${key}" type="file" accept="image/png,image/jpeg,image/webp,audio/mpeg,audio/mp4,audio/wav">
+    <input type="hidden" name="${key}_path" value="${esc(currentPath||"")}">
+    <input type="hidden" name="${key}_type" value="${esc(currentType||"")}">
+    <div class="paste-zone" tabindex="0" data-key="${key}">Dán ảnh/audio vào đây</div>
+    <div class="media-preview" data-preview="${key}">${currentPath?`<span class="badge">${currentType==="audio"?"🔊 Audio":"🖼 Media"} hiện có</span>`:""}</div>
+  </div>`;
+}
+async function showMediaPreview(container,key,path,type){
+  const prev=container.querySelector(`[data-preview="${key}"]`);
+  if(!prev) return;
+  const url=await signedUrl(path);
+  if(type==="image"&&url) prev.innerHTML=`<img class="draft-preview-img" src="${url}" alt="Ảnh vừa dán"><button type="button" class="ghost sm clear-media" data-key="${key}">Xóa ảnh</button>`;
+  else if(type==="audio"&&url) prev.innerHTML=`<audio controls src="${url}"></audio><button type="button" class="ghost sm clear-media" data-key="${key}">Xóa audio</button>`;
+  else prev.innerHTML=path?`<span class="badge">Media đã chọn</span>`:"";
+}
+function serializeDraftForm(form,extra={}){
+  const fd=new FormData(form),fields={};
+  for(const [k,v] of fd.entries()){
+    if(v instanceof File) continue;
+    fields[k]=v;
+  }
+  return {...extra,fields};
+}
+function hydrateDraftForm(form,draft){
+  if(!draft?.fields) return;
+  for(const [k,v] of Object.entries(draft.fields)){
+    const el=form.elements.namedItem(k);
+    if(el && !(el instanceof RadioNodeList)) el.value=v??"";
+  }
+}
+function bindDraftAutosave(form,testId,extra){
+  const save=debounce(()=>saveAuthorDraftLocal(testId,serializeDraftForm(form,extra)),220);
+  form.addEventListener("input",save);
+  form.addEventListener("change",save);
+  save();
+}
+function bindPasteMedia(form,testId,prefix,extra){
+  const save=()=>saveAuthorDraftLocal(testId,serializeDraftForm(form,extra));
+  const setMedia=async(key,file)=>{
+    if(!(file instanceof File)||!file.size) return;
+    try{
+      const zone=form.querySelector(`.paste-zone[data-key="${key}"]`);
+      if(zone){zone.textContent="Đang tải media…";zone.classList.add("busy")}
+      const up=await uploadMedia(file,`${prefix}/${testId}/drafts`);
+      form.elements.namedItem(`${key}_path`).value=up.storage_path;
+      form.elements.namedItem(`${key}_type`).value=up.media_type;
+      await showMediaPreview(form,key,up.storage_path,up.media_type);
+      if(zone){zone.textContent="Dán ảnh/audio khác vào đây";zone.classList.remove("busy")}
+      save();
+    }catch(err){toast(err.message,6000)}
+  };
+  form.querySelectorAll(".media-file-input").forEach(inp=>inp.addEventListener("change",()=>setMedia(inp.dataset.key,inp.files?.[0])));
+  form.querySelectorAll(".paste-zone").forEach(zone=>{
+    zone.addEventListener("paste",e=>{
+      const files=[...(e.clipboardData?.files||[])];
+      const file=files.find(f=>f.type.startsWith("image/")||f.type.startsWith("audio/"));
+      if(file){e.preventDefault();setMedia(zone.dataset.key,file);}
+    });
+  });
+  form.addEventListener("click",e=>{
+    const b=e.target.closest(".clear-media"); if(!b) return;
+    const key=b.dataset.key;
+    form.elements.namedItem(`${key}_path`).value="";
+    form.elements.namedItem(`${key}_type`).value="";
+    const p=form.querySelector(`[data-preview="${key}"]`); if(p)p.innerHTML="";
+    save();
+  });
+}
+function openGroupEditor(testId, partId, partNo, draft=null){
   modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal">
-    <div class="row between"><div><h2>Nhóm nội dung · Part ${partNo}</h2><p class="muted">Dùng cho passage, ảnh hoặc audio chung nhiều câu.</p></div><button class="ghost sm" data-close>Đóng</button></div>
+    <div class="row between"><div><h2>Nhóm nội dung · Part ${partNo}</h2><p class="muted">Dùng chung passage, ảnh hoặc audio cho nhiều câu.</p></div><button class="ghost sm" data-close>Đóng</button></div>
     <form id="groupForm" class="form-grid">
       <label class="span-2">Tên nhóm<input name="title" placeholder="Ví dụ: Conversation 1 / Passage 1"></label>
       <label>Thứ tự nguồn<input type="number" name="source_order" min="1" required></label>
       <label>Chế độ phát<select name="play_mode"><option value="normal">Bình thường</option><option value="once">Nghe một lần</option><option value="auto">Tự phát</option></select></label>
-      <label><span>Cho nghe lại</span><select name="allow_replay"><option value="true">Có</option><option value="false">Không</option></select></label>
-      <label><span>Cho tua</span><select name="allow_seek"><option value="true">Có</option><option value="false">Không</option></select></label>
+      <label>Cho nghe lại<select name="allow_replay"><option value="true">Có</option><option value="false">Không</option></select></label>
+      <label>Cho tua<select name="allow_seek"><option value="true">Có</option><option value="false">Không</option></select></label>
       <label>Số lượt nghe tối đa<input type="number" name="max_plays" min="1" placeholder="Để trống = không giới hạn"></label>
       <button class="primary span-2">Tạo nhóm</button>
     </form>
   </div></div>`;
   modalRoot.querySelector("[data-close]").onclick=closeModal;
-  modalRoot.querySelector("#groupForm").onsubmit=async e=>{
+  const form=modalRoot.querySelector("#groupForm");
+  hydrateDraftForm(form,draft);
+  bindDraftAutosave(form,testId,{kind:"group",partId,partNo});
+  form.onsubmit=async e=>{
     e.preventDefault();
     const f=Object.fromEntries(new FormData(e.target));
     const {error}=await sb.rpc("staff_upsert_stimulus_group",{p_data:{
-      test_part_id:partId,
-      source_order:+f.source_order,
-      title:f.title||null,
-      play_mode:f.play_mode,
-      allow_replay:f.allow_replay==="true",
-      allow_seek:f.allow_seek==="true",
+      test_part_id:partId, source_order:+f.source_order, title:f.title||null,
+      play_mode:f.play_mode, allow_replay:f.allow_replay==="true", allow_seek:f.allow_seek==="true",
       max_plays:f.max_plays?+f.max_plays:null
     }});
     if(error) return toast(error.message);
-    closeModal(); toast("Đã tạo nhóm nội dung"); renderTestDetail(testId);
+    await clearAuthorDraft(testId);
+    closeModal(); toast("Đã tạo nhóm nội dung"); renderTestDetail(testId,"authoring");
   };
 }
-function openStimulusEditor(testId, groupId){
+function openStimulusEditor(testId, groupId, draft=null){
   modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal">
-    <div class="row between"><div><h2>Thêm nội dung chung</h2><p class="muted">Text, ảnh hoặc audio này được dùng chung cho các câu thuộc nhóm.</p></div><button class="ghost sm" data-close>Đóng</button></div>
+    <div class="row between"><div><h2>Thêm nội dung chung</h2><p class="muted">Text, ảnh hoặc audio này dùng chung cho các câu thuộc nhóm.</p></div><button class="ghost sm" data-close>Đóng</button></div>
     <form id="stimForm" class="stack">
       <label>Loại<select name="kind" id="stimKind"><option value="text">Văn bản</option><option value="file">Ảnh / Audio</option></select></label>
       <label id="stimTextWrap">Nội dung<textarea name="content" rows="6"></textarea></label>
-      <label id="stimFileWrap" hidden>Chọn file<input type="file" name="file" accept="image/png,image/jpeg,image/webp,audio/mpeg,audio/mp4,audio/wav"></label>
+      <div id="stimFileWrap" hidden>${mediaPasteField("stimulus_media","Ảnh / Audio")}</div>
       <label>Thứ tự<input type="number" name="sort_order" value="1" min="1"></label>
       <button class="primary">Lưu nội dung</button>
     </form>
   </div></div>`;
   modalRoot.querySelector("[data-close]").onclick=closeModal;
+  const form=modalRoot.querySelector("#stimForm");
+  hydrateDraftForm(form,draft);
   const kind=modalRoot.querySelector("#stimKind");
-  kind.onchange=()=>{
+  const syncKind=()=>{
     modalRoot.querySelector("#stimTextWrap").hidden=kind.value!=="text";
     modalRoot.querySelector("#stimFileWrap").hidden=kind.value!=="file";
   };
-  modalRoot.querySelector("#stimForm").onsubmit=async e=>{
+  kind.onchange=syncKind; syncKind();
+  if(draft?.fields?.stimulus_media_path) showMediaPreview(form,"stimulus_media",draft.fields.stimulus_media_path,draft.fields.stimulus_media_type);
+  bindPasteMedia(form,testId,"groups",{kind:"stimulus",groupId});
+  bindDraftAutosave(form,testId,{kind:"stimulus",groupId});
+  form.onsubmit=async e=>{
     e.preventDefault();
     const fd=new FormData(e.target);
-    let payload={stimulus_group_id:groupId,sort_order:+fd.get("sort_order")||1};
-    try{
-      if(fd.get("kind")==="text"){
-        payload.media_type="text"; payload.content=fd.get("content")||"";
-      }else{
-        const file=fd.get("file");
-        if(!(file instanceof File)||!file.size) return toast("Chưa chọn file.");
-        const up=await uploadMedia(file,`groups/${groupId}`);
-        Object.assign(payload,up);
-      }
-      const {error}=await sb.rpc("staff_upsert_stimulus",{p_data:payload});
-      if(error) throw error;
-      closeModal(); toast("Đã thêm nội dung chung"); renderTestDetail(testId);
-    }catch(err){ toast(err.message); }
+    const payload={stimulus_group_id:groupId,sort_order:+fd.get("sort_order")||1};
+    if(fd.get("kind")==="text"){
+      payload.media_type="text"; payload.content=fd.get("content")||"";
+    }else{
+      const path=fd.get("stimulus_media_path"),type=fd.get("stimulus_media_type");
+      if(!path||!type) return toast("Chưa chọn hoặc paste media.");
+      payload.media_type=type; payload.storage_path=path;
+    }
+    const {error}=await sb.rpc("staff_upsert_stimulus",{p_data:payload});
+    if(error) return toast(error.message);
+    await clearAuthorDraft(testId);
+    closeModal(); toast("Đã thêm nội dung chung"); renderTestDetail(testId,"authoring");
   };
 }
-function choiceFields(choice){
-  return `<div class="choice-edit">
-    <div class="choice-key">${choice}</div>
-    <input name="choice_${choice}" placeholder="Nội dung đáp án ${choice}">
-    <input name="choice_file_${choice}" type="file" accept="image/png,image/jpeg,image/webp,audio/mpeg,audio/mp4,audio/wav">
-  </div>`;
-}
-function openQuestionEditor(testId, partId, partNo, allGroups, existing=null){
+function openQuestionEditor(testId, partId, partNo, allGroups, existing=null, draft=null){
   const groups=allGroups.filter(g=>g.part_no===partNo);
   const choices=Object.fromEntries((existing?.choices||[]).map(c=>[c.key,c]));
   modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal wide">
-    <div class="row between"><div><h2>${existing?"Sửa":"Thêm"} câu hỏi · Part ${partNo}</h2><p class="muted">Câu hỏi và từng đáp án có thể có ảnh/audio riêng.</p></div><button class="ghost sm" data-close>Đóng</button></div>
+    <div class="row between"><div><h2>${existing?"Sửa":"Thêm"} câu hỏi · Part ${partNo}</h2><p class="muted">Có thể paste ảnh trực tiếp từ PDF/Snipping Tool vào từng vùng.</p></div><button class="ghost sm" data-close>Đóng</button></div>
     <form id="questionForm" class="stack">
       <div class="form-grid">
         <label>Số câu nguồn<input type="number" name="source_number" value="${existing?.source_number??""}" required></label>
         <label>Thứ tự<input type="number" name="source_order" value="${existing?.source_order??existing?.source_number??""}" required></label>
         <label class="span-2">Nhóm nội dung<select name="stimulus_group_id"><option value="">Không dùng nhóm</option>${groups.map(g=>`<option value="${g.id}" ${existing?.stimulus_group_id===g.id?"selected":""}>${esc(g.title||`Nhóm ${g.source_order}`)}</option>`).join("")}</select></label>
         <label class="span-2">Nội dung câu hỏi<textarea name="content" rows="3">${esc(existing?.content||"")}</textarea></label>
-        <label class="span-2">Ảnh/Audio riêng của câu<input type="file" name="question_file" accept="image/png,image/jpeg,image/webp,audio/mpeg,audio/mp4,audio/wav"><span class="hint">${existing?.storage_path?"Đang có media; chỉ chọn file nếu muốn thay.":""}</span></label>
+        <div class="span-2">${mediaPasteField("question_media","Media riêng của câu hỏi",existing?.storage_path,existing?.media_type)}</div>
       </div>
-      <h3>Đáp án</h3>
+      <div class="row between wrap"><h3>Đáp án</h3><span class="muted small">Mỗi đáp án có thể là chữ, ảnh hoặc cả hai.</span></div>
       <div class="choices-editor">
-        ${["A","B","C","D"].map(k=>`<div class="choice-edit"><div class="choice-key">${k}</div><input name="choice_${k}" value="${esc(choices[k]?.content||"")}" placeholder="Nội dung đáp án ${k}"><input name="choice_file_${k}" type="file" accept="image/png,image/jpeg,image/webp,audio/mpeg,audio/mp4,audio/wav"><span class="hint">${choices[k]?.storage_path?"Có media":""}</span></div>`).join("")}
+        ${["A","B","C","D"].map(k=>`<div class="choice-edit-v2">
+          <div class="choice-key">${k}</div>
+          <input name="choice_${k}" value="${esc(choices[k]?.content||"")}" placeholder="Nội dung đáp án ${k}">
+          <div>${mediaPasteField(`choice_${k}_media`,`Media đáp án ${k}`,choices[k]?.storage_path,choices[k]?.media_type)}</div>
+        </div>`).join("")}
       </div>
       <label>Đáp án đúng<select name="correct_choice_key">${["A","B","C","D"].map(k=>`<option ${existing?.correct_choice_key===k?"selected":""}>${k}</option>`).join("")}</select></label>
-      <button class="primary">${existing?"Lưu thay đổi":"Thêm câu hỏi"}</button>
+      <div class="row between wrap"><span id="draftStatus" class="muted">Tự động lưu nháp</span><button class="primary">${existing?"Lưu thay đổi":"Thêm câu hỏi"}</button></div>
     </form>
   </div></div>`;
   modalRoot.querySelector("[data-close]").onclick=closeModal;
-  modalRoot.querySelector("#questionForm").onsubmit=async e=>{
+  const form=modalRoot.querySelector("#questionForm");
+  hydrateDraftForm(form,draft);
+  const initialMedia=[
+    ["question_media",existing?.storage_path,existing?.media_type],
+    ...["A","B","C","D"].map(k=>[`choice_${k}_media`,choices[k]?.storage_path,choices[k]?.media_type])
+  ];
+  for(const [key,path,type] of initialMedia){
+    const dpath=draft?.fields?.[`${key}_path`],dtype=draft?.fields?.[`${key}_type`];
+    if(dpath||path) showMediaPreview(form,key,dpath||path,dtype||type);
+  }
+  const extra={kind:"question",partId,partNo,existingId:existing?.id||null};
+  bindPasteMedia(form,testId,"authoring",extra);
+  bindDraftAutosave(form,testId,extra);
+  form.onsubmit=async e=>{
     e.preventDefault();
     const fd=new FormData(e.target);
-    const btn=e.target.querySelector("button[type='submit']");
-    btn.disabled=true; btn.textContent="Đang lưu...";
+    const btn=e.target.querySelector("button[type='submit']"); btn.disabled=true; btn.textContent="Đang lưu...";
     try{
-      let qMedia={media_type:existing?.media_type||null,storage_path:existing?.storage_path||null};
-      const qf=fd.get("question_file");
-      if(qf instanceof File && qf.size) qMedia=await uploadMedia(qf,`questions/${testId}`);
-      const choiceRows=[];
-      for(const k of ["A","B","C","D"]){
-        let cMedia={media_type:choices[k]?.media_type||null,storage_path:choices[k]?.storage_path||null};
-        const cf=fd.get(`choice_file_${k}`);
-        if(cf instanceof File && cf.size) cMedia=await uploadMedia(cf,`choices/${testId}`);
-        choiceRows.push({key:k,content:String(fd.get(`choice_${k}`)||""),...cMedia});
-      }
+      const choiceRows=["A","B","C","D"].map(k=>({
+        key:k,
+        content:String(fd.get(`choice_${k}`)||""),
+        media_type:fd.get(`choice_${k}_media_type`)||null,
+        storage_path:fd.get(`choice_${k}_media_path`)||null
+      }));
       const payload={
-        id:existing?.id||undefined,
-        test_part_id:partId,
-        source_number:+fd.get("source_number"),
-        source_order:+fd.get("source_order"),
+        id:existing?.id||undefined, test_part_id:partId,
+        source_number:+fd.get("source_number"), source_order:+fd.get("source_order"),
         stimulus_group_id:fd.get("stimulus_group_id")||null,
         content:String(fd.get("content")||""),
-        correct_choice_key:fd.get("correct_choice_key"),
-        score_weight:1,
-        ...qMedia,
-        choices:choiceRows
+        media_type:fd.get("question_media_type")||null,
+        storage_path:fd.get("question_media_path")||null,
+        correct_choice_key:fd.get("correct_choice_key"), score_weight:1, choices:choiceRows
       };
       const {error}=await sb.rpc("staff_upsert_question",{p_data:payload});
       if(error) throw error;
-      closeModal(); toast(existing?"Đã lưu câu hỏi":"Đã thêm câu hỏi"); renderTestDetail(testId);
-    }catch(err){ toast(err.message,6000); }
-    finally{ btn.disabled=false; btn.textContent=existing?"Lưu thay đổi":"Thêm câu hỏi"; }
+      await clearAuthorDraft(testId);
+      closeModal(); toast(existing?"Đã lưu câu hỏi":"Đã thêm câu hỏi");
+      saveTestUi(testId,{tab:"authoring",scrollY:window.scrollY});
+      renderTestDetail(testId,"authoring");
+    }catch(err){toast(err.message,6000)}
+    finally{btn.disabled=false;btn.textContent=existing?"Lưu thay đổi":"Thêm câu hỏi";}
   };
 }
-
 async function renderStudent(){
   showLoading();
   const [{data:tests=[],error},{data:attempts=[]}] = await Promise.all([
@@ -643,15 +960,25 @@ function confirmStart(testId){
     go(`/exam/${attemptId}`);
   };
 }
+
 async function renderExam(attemptId){
   if(!session||profile?.role!=="student") return go("/login");
   showLoading("Đang tải bài thi...");
   const {data,error}=await sb.rpc("get_attempt_payload",{p_attempt_id:attemptId});
   if(error) return view.innerHTML=`<div class="card">${esc(error.message)}</div>`;
   if(data?.attempt?.status!=="in_progress") return go(`/result/${attemptId}`);
-  examState={attemptId,payload:data,current:0};
+  const ui=readJSON(attemptUiKey(attemptId),{current:0});
+  examState={attemptId,payload:data,current:Math.min(ui.current||0,(data.questions?.length||1)-1),saveStatus:"Đã lưu"};
+  mergeQueuedAnswers(attemptId,data.questions||[]);
   await hydrateMedia(data.questions||[]);
-  drawExam(); bindAntiCheat();
+  drawExam(); bindAntiCheat(); flushAnswerQueue();
+}
+function mergeQueuedAnswers(attemptId,questions){
+  const queue=readJSON(attemptQueueKey(attemptId),[]);
+  for(const ev of queue){
+    const q=questions.find(x=>x.id===ev.question_id);
+    if(q){q.selected=ev.choice;q.marked=ev.marked;}
+  }
 }
 async function hydrateMedia(questions){
   const paths=new Set();
@@ -675,12 +1002,22 @@ function renderMedia(type,url,content,cls=""){
   if(type==="text" || content) return content?`<div class="${cls}">${esc(content).replace(/\n/g,"<br>")}</div>`:"";
   return "";
 }
+function saveAttemptUi(){
+  if(!examState) return;
+  writeJSON(attemptUiKey(examState.attemptId),{current:examState.current,updated_at:Date.now()});
+}
+function setSaveStatus(text,cls=""){
+  if(examState) examState.saveStatus=text;
+  const el=document.querySelector("#saveStatus");
+  if(el){el.textContent=text;el.className=`save-status ${cls}`;}
+}
 function drawExam(){
   const {payload,current}=examState;
   const q=payload.questions[current], a=payload.attempt;
   if(!q) return view.innerHTML=`<div class="card">Không có câu hỏi.</div>`;
+  saveAttemptUi();
   view.innerHTML=`<section class="exam-layout"><div class="exam-main">
-    <div class="card"><div class="row between"><div><b>Part ${q.part}</b><div class="muted">Câu ${q.number} · ${current+1}/${payload.questions.length}</div></div><div id="timer" class="timer"></div></div></div>
+    <div class="card"><div class="row between wrap"><div><b>Part ${q.part}</b><div class="muted">Câu ${q.number} · ${current+1}/${payload.questions.length}</div></div><div class="exam-status"><span id="saveStatus" class="save-status">${esc(examState.saveStatus||"Đã lưu")}</span><div id="timer" class="timer"></div></div></div></div>
     ${(q.stimuli||[]).map(s=>`<div class="stimulus">${renderMedia(s.type,s.url,s.content)}</div>`).join("")}
     <div class="card question">
       ${renderMedia(q.media_type,q.url,null)}
@@ -707,14 +1044,50 @@ function drawExam(){
   document.querySelector("#submitBtn").onclick=confirmSubmit;
   updateTimer(); timerId=setInterval(updateTimer,1000);
 }
+function enqueueAnswer(attemptId,event){
+  const q=readJSON(attemptQueueKey(attemptId),[]);
+  q.push(event);
+  writeJSON(attemptQueueKey(attemptId),q);
+}
 async function saveCurrent(choice,marked=document.querySelector("#markReview")?.checked||false){
+  if(!examState) return;
   const q=examState.payload.questions[examState.current];
   q.marked=marked;
-  if(!choice) return;
-  const {data,error}=await sb.rpc("save_answer",{p_attempt_id:examState.attemptId,p_question_id:q.id,p_choice:choice,p_marked:marked});
-  if(error) return toast("Không lưu được đáp án: "+error.message);
+  if(!choice){ setSaveStatus("Đã lưu tạm đánh dấu","local"); return; }
   q.selected=choice;
-  if(data?.submitted) go(`/result/${examState.attemptId}`);
+  const ev={client_event_id:crypto.randomUUID(),question_id:q.id,choice,marked,created_at:Date.now()};
+  enqueueAnswer(examState.attemptId,ev);
+  setSaveStatus(navigator.onLine?"Đang lưu…":"Mất mạng – đã lưu tạm",navigator.onLine?"pending":"offline");
+  drawPaletteOnly();
+  flushAnswerQueue();
+}
+function drawPaletteOnly(){
+  const side=document.querySelector(".exam-side");
+  if(!side) return;
+  side.querySelectorAll(".qbtn").forEach((b,i)=>{
+    const x=examState.payload.questions[i];
+    b.classList.toggle("done",!!x.selected);
+    b.classList.toggle("review",!!x.marked);
+  });
+}
+async function flushAnswerQueue(){
+  if(answerFlushBusy||!examState||!navigator.onLine) return;
+  answerFlushBusy=true;
+  try{
+    let queue=readJSON(attemptQueueKey(examState.attemptId),[]);
+    while(queue.length){
+      const ev=queue[0];
+      setSaveStatus("Đang lưu…","pending");
+      const {data,error}=await sb.rpc("save_answer_v2",{
+        p_attempt_id:examState.attemptId,p_question_id:ev.question_id,p_choice:ev.choice,
+        p_marked:ev.marked,p_client_event_id:ev.client_event_id
+      });
+      if(error){ setSaveStatus("Lưu tạm – chờ mạng","offline"); break; }
+      queue.shift(); writeJSON(attemptQueueKey(examState.attemptId),queue);
+      if(data?.submitted){ go(`/result/${examState.attemptId}`); return; }
+    }
+    if(!queue.length) setSaveStatus("Đã lưu","saved");
+  }finally{answerFlushBusy=false;}
 }
 function updateTimer(){
   if(!examState) return;
@@ -732,9 +1105,15 @@ function confirmSubmit(){
   </div></div>`;
   modalRoot.querySelector("[data-close]").onclick=closeModal;
   modalRoot.querySelector("#doSubmit").onclick=async()=>{
+    if(readJSON(attemptQueueKey(examState.attemptId),[]).length){
+      await flushAnswerQueue();
+      if(readJSON(attemptQueueKey(examState.attemptId),[]).length) return toast("Còn đáp án chưa đồng bộ. Hãy chờ mạng ổn định trước khi nộp.",6000);
+    }
     suppressFullscreenViolation=true;
     const {error}=await sb.rpc("submit_attempt",{p_attempt_id:examState.attemptId});
     if(error){suppressFullscreenViolation=false;return toast(error.message);}
+    localStorage.removeItem(attemptQueueKey(examState.attemptId));
+    localStorage.removeItem(attemptUiKey(examState.attemptId));
     closeModal(); go(`/result/${examState.attemptId}`);
   };
 }
@@ -745,11 +1124,15 @@ function bindAntiCheat(){
     if(!examState||route()!==`/exam/${examState.attemptId}`) return;
     const now=Date.now(); if(now-lastViolationAt<1800) return;
     lastViolationAt=now;
-    const {data,error}=await sb.rpc("register_violation",{p_attempt_id:examState.attemptId,p_event_type:type,p_details:{ua:navigator.userAgent}});
+    const eventId=crypto.randomUUID();
+    const {data,error}=await sb.rpc("register_violation_v2",{
+      p_attempt_id:examState.attemptId,p_event_type:type,p_details:{ua:navigator.userAgent},p_client_event_id:eventId
+    });
     if(error) return console.error(error);
+    if(data?.duplicate) return;
     examState.payload.attempt.violation_count=data.violation_count;
     if(data.submitted){ alert("Bạn đã vi phạm lần thứ 2. Hệ thống đã tự động nộp bài."); go(`/result/${examState.attemptId}`); }
-    else alert("Cảnh báo lần 1: nếu vi phạm lần nữa, hệ thống sẽ tự động nộp bài.");
+    else if(data.warning) alert("Cảnh báo lần 1: nếu vi phạm lần nữa, hệ thống sẽ tự động nộp bài.");
   };
   document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="hidden") fire("tab_hidden"); });
   window.addEventListener("blur",()=>{ if(document.visibilityState==="visible") fire("window_blur"); });
@@ -758,7 +1141,10 @@ function bindAntiCheat(){
     if(fullscreenWasEntered&&!document.fullscreenElement&&examState&&route().startsWith("/exam/")) fire("fullscreen_exit");
     if(document.fullscreenElement) fullscreenWasEntered=true;
   });
+  window.addEventListener("online",()=>{setSaveStatus("Có mạng – đang đồng bộ…","pending");flushAnswerQueue()});
+  window.addEventListener("offline",()=>setSaveStatus("Mất mạng – đáp án sẽ lưu tạm","offline"));
 }
+
 async function renderResult(attemptId){
   showLoading("Đang tải kết quả...");
   const {data,error}=await sb.rpc("get_attempt_result",{p_attempt_id:attemptId});

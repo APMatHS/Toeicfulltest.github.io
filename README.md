@@ -1,56 +1,68 @@
-# TOEIC Full Test — V1.1
+# TOEIC Full Test — V1.2
 
-Bản V1.1 cho GitHub Pages, dùng Supabase project hiện tại.
+Bản này dùng Supabase hiện tại và được thiết kế cho nhập đề TOEIC từ PDF nhanh, an toàn khi thi thật.
 
-## Điểm mới
-- Sửa luồng Auth/render để tránh màn hình trắng sau đăng nhập.
-- Tạo tài khoản từng người, có gán lớp.
-- Nhập danh sách sinh viên từ Excel/CSV với 4 cột: `Họ tên`, `MSSV`, `Email`, `Password`.
-- Password chỉ dùng để tạo Supabase Auth, không lưu plaintext trong bảng `profiles`.
-- Soạn đề trực tiếp:
-  - nhóm nội dung dùng chung cho nhiều câu;
-  - stimulus dạng text / ảnh / audio;
-  - câu hỏi có thể gắn ảnh hoặc audio;
-  - từng đáp án A/B/C/D có thể gắn ảnh hoặc audio.
-- Kiến trúc sẵn sàng cho Listening: một audio có thể nằm ở Stimulus Group và dùng chung nhiều câu.
-- Student exam render được ảnh/audio ở stimulus, câu hỏi và đáp án.
-- Anti-cheat có `tab_hidden`, `window_blur`, `fullscreen_exit`, có chống đếm trùng cơ bản.
+## Mới trong V1.2
 
-## Upload danh sách sinh viên
-Dùng file `.xlsx`, `.xls` hoặc `.csv`.
+- Giảng viên/System Admin có trang Hồ sơ:
+  - tự đổi mật khẩu;
+  - giảng viên được đổi họ tên.
+- Soạn đề có autosave nháp 2 lớp:
+  - lưu ngay trên trình duyệt;
+  - tự đồng bộ nháp lên Supabase.
+- Nhớ tab Soạn đề và vị trí cuộn khi quay lại.
+- Khi đóng form đang nhập, có thể khôi phục bản nháp.
+- Paste ảnh trực tiếp bằng `Ctrl+V` từ PDF/Snipping Tool tại:
+  - stimulus/nội dung chung;
+  - media của câu hỏi;
+  - media từng đáp án A/B/C/D.
+- Ảnh/audio được upload ngay khi chọn/paste để bản nháp không mất media.
+- Trang bài kiểm tra có 5 tab:
+  - Tổng quan
+  - LIVE
+  - Bài làm
+  - Soạn đề
+  - Cài đặt
+- LIVE dùng Supabase Realtime:
+  - tổng số sinh viên;
+  - đang làm;
+  - đã nộp;
+  - chưa vào;
+  - có vi phạm;
+  - số câu đã trả lời;
+  - thời gian bắt đầu/còn lại;
+  - điểm khi đã nộp.
+- Có lọc LIVE nhanh và tải Excel.
+- Excel kết quả có 3 sheet:
+  - `Tong_hop`
+  - `Chi_tiet`
+  - `Vi_pham`
+- Bài làm sinh viên có bảo vệ dữ liệu:
+  - lưu đáp án ngay lập tức;
+  - queue cục bộ khi mạng chập chờn;
+  - tự đồng bộ khi có mạng lại;
+  - client event UUID chống gửi trùng;
+  - nhớ câu đang làm sau reload;
+  - deadline vẫn do server quyết định.
+- Chống gian lận dùng event UUID để giảm nguy cơ đếm trùng.
 
-Các tên cột được nhận:
-- Họ tên: `Họ tên`, `HoTen`, `name`, `full_name`
-- MSSV: `MSSV`, `Mã SV`, `student_code`
-- Email: `Email`
-- Password: `Password`, `Mật khẩu`
+## Import sinh viên
 
-Password tối thiểu 6 ký tự.
+Excel/CSV:
+- `Họ tên`
+- `MSSV`
+- `Email`
+- `Password`
 
-## Media
-Storage bucket: `test-media`.
-
-V1.1 dùng:
-- `image/png`
-- `image/jpeg`
-- `image/webp`
-- `audio/mpeg`
-- `audio/mp4`
-- `audio/wav`
-
-## Supabase
-Backend đã được cập nhật cho V1.1:
-- `manage-user` V3 hỗ trợ `bulk_create_students`;
-- questions/choices có `media_type`, `storage_path`;
-- stimulus groups có cấu hình Listening cơ bản;
-- RPC authoring/payload đã trả media cho câu hỏi và đáp án.
+Password chỉ gửi tới Supabase Auth, không lưu plaintext trong bảng `profiles`.
 
 ## Deploy GitHub Pages
-Upload toàn bộ nội dung ZIP vào root branch `main`, giữ nguyên cấu trúc:
+
+Giải nén ZIP rồi upload đè toàn bộ vào root branch `main`:
 - `index.html`
 - `README.md`
 - `assets/app.js`
 - `assets/config.js`
 - `assets/styles.css`
 
-Sau đó reload trang bằng Ctrl+F5 nếu browser còn cache bản cũ.
+Sau khi Pages deploy xong, dùng `Ctrl+F5` để tránh cache JS/CSS cũ.

@@ -125,3 +125,37 @@ th{font-size:.82rem;color:#667085;background:#fafafa}
   .modal-backdrop{padding:8px}.modal{padding:16px;border-radius:14px}
   .palette{grid-template-columns:repeat(5,1fr)}
 }
+
+.profile-link{color:white;text-decoration:none}
+.profile-link:hover{text-decoration:underline}
+.profile-card{max-width:920px;margin:24px auto}
+.profile-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}
+.test-tabs{margin-top:14px}
+.overview-actions{margin-top:16px}
+.settings-grid>div{padding:14px;border:1px solid var(--line);border-radius:12px}
+.live-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:16px 0}
+.live-kpis>div{border:1px solid var(--line);border-radius:12px;padding:12px;background:#fafcff;display:grid;gap:3px}
+.live-kpis span{color:var(--muted);font-size:.82rem}
+.live-kpis b{font-size:1.55rem}
+.live-filters{margin:10px 0}
+.media-paste-field{display:grid;gap:8px;border:1px solid var(--line);border-radius:12px;padding:10px;background:#fbfdff}
+.media-file-input{padding:8px}
+.paste-zone{border:2px dashed #b7c4d6;border-radius:10px;padding:14px;text-align:center;color:var(--muted);background:#fff;cursor:text;min-height:50px}
+.paste-zone:focus{outline:3px solid rgba(37,99,235,.14);border-color:#60a5fa;color:#1d4ed8}
+.paste-zone.busy{opacity:.6}
+.media-preview{display:grid;gap:8px}
+.draft-preview-img{max-width:min(420px,100%);max-height:260px;object-fit:contain;border-radius:10px;border:1px solid var(--line);background:white}
+.choice-edit-v2{display:grid;grid-template-columns:42px minmax(180px,1fr) minmax(280px,1.3fr);gap:10px;align-items:start;border:1px solid var(--line);border-radius:12px;padding:10px}
+.exam-status{display:flex;align-items:flex-end;gap:12px;flex-direction:column}
+.save-status{font-size:.78rem;color:var(--muted);font-weight:700}
+.save-status.saved{color:#15803d}.save-status.pending{color:#b45309}.save-status.offline,.save-status.local{color:#b42318}
+@media (max-width:900px){
+  .live-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .profile-grid{grid-template-columns:1fr}
+  .choice-edit-v2{grid-template-columns:42px 1fr}
+  .choice-edit-v2>div:last-child{grid-column:2}
+}
+@media (max-width:620px){
+  .live-kpis{grid-template-columns:1fr 1fr}
+  .exam-status{align-items:flex-end}
+}
