@@ -1,84 +1,91 @@
-# TOEIC Full Test — V1.3
+# TOEIC Full Test — V1.5
 
-Bản này dùng Supabase hiện tại và được thiết kế cho nhập đề TOEIC từ PDF nhanh, an toàn khi thi thật.
+Bản V1.5 tập trung vào **thi thật**, trải nghiệm ít chớp/tải lại và luồng tạo bài kiểm tra lâu dài.
 
-## Mới trong V1.3
+## 1. Chuyển trang gần như “đóng băng”
 
-- Giảng viên/System Admin có trang Hồ sơ:
-  - tự đổi mật khẩu;
-  - giảng viên được đổi họ tên.
-- Soạn đề có autosave nháp 2 lớp:
-  - lưu ngay trên trình duyệt;
-  - tự đồng bộ nháp lên Supabase.
-- Nhớ tab Soạn đề và vị trí cuộn khi quay lại.
-- Khi đóng form đang nhập, có thể khôi phục bản nháp.
-- Paste ảnh trực tiếp bằng `Ctrl+V` từ PDF/Snipping Tool tại:
-  - stimulus/nội dung chung;
-  - media của câu hỏi;
-  - media từng đáp án A/B/C/D.
-- Ảnh/audio được upload ngay khi chọn/paste để bản nháp không mất media.
-- Trang bài kiểm tra có 5 tab:
-  - Tổng quan
-  - LIVE
-  - Bài làm
-  - Soạn đề
-  - Cài đặt
-- LIVE dùng Supabase Realtime:
-  - tổng số sinh viên;
-  - đang làm;
-  - đã nộp;
-  - chưa vào;
-  - có vi phạm;
-  - số câu đã trả lời;
-  - thời gian bắt đầu/còn lại;
-  - điểm khi đã nộp.
-- Có lọc LIVE nhanh và tải Excel.
-- Excel kết quả có 3 sheet:
-  - `Tong_hop`
-  - `Chi_tiet`
-  - `Vi_pham`
-- Bài làm sinh viên có bảo vệ dữ liệu:
-  - lưu đáp án ngay lập tức;
-  - queue cục bộ khi mạng chập chờn;
-  - tự đồng bộ khi có mạng lại;
-  - client event UUID chống gửi trùng;
-  - nhớ câu đang làm sau reload;
-  - deadline vẫn do server quyết định.
-- Chống gian lận dùng event UUID để giảm nguy cơ đếm trùng.
+- Tổng quan / Tài khoản / Lớp / Bài kiểm tra / Hồ sơ được giữ sống trong DOM.
+- Khi chuyển trang rồi quay lại:
+  - không dựng lại trang nếu không cần;
+  - giữ vị trí scroll;
+  - giữ trạng thái giao diện đang mở;
+  - dữ liệu nền được prefetch sau đăng nhập để lần mở đầu nhanh hơn.
+- Bên trong một bài kiểm tra, các tab Tổng quan / LIVE / Bài làm / Soạn đề / Cài đặt vẫn giữ nguyên trạng thái như V1.3–V1.4.
 
+## 2. Bốn cách tạo bài kiểm tra
 
-### Giao diện “đóng băng” giữa các tab của bài kiểm tra
+Nút **Tạo bài kiểm tra** mở 4 tab:
 
-- `Tổng quan / LIVE / Bài làm / Soạn đề / Cài đặt` được giữ sống trong cùng một workspace.
-- Chuyển tab chỉ ẩn/hiện panel, **không hủy DOM và không gọi tải lại toàn trang**.
-- Quay lại tab trước giữ nguyên gần như tuyệt đối:
-  - vị trí cuộn;
-  - form đang nhập;
-  - vùng đang mở;
-  - bộ lọc LIVE;
-  - nội dung đã render.
-- LIVE chỉ tải lần đầu, sau đó tiếp tục nhận Realtime ngầm kể cả khi đang xem tab khác.
-- Bài làm chỉ tải lần đầu trong phiên workspace; quay lại không hiện “Đang tải…” nữa.
-- URL vẫn thay đổi theo tab và nút Back/Forward vẫn hoạt động.
-- Chỉ dựng lại workspace khi có thay đổi dữ liệu thật sự như thêm/sửa câu, thêm stimulus, xuất bản/đóng bài, F5 hoặc đổi sang bài kiểm tra khác.
+1. **Tạo thủ công** — đang hoạt động.
+2. **Nhập từ file** — frontend sẵn sàng cho PDF/DOCX/XLSX, AI chưa nối.
+3. **Từ bài kiểm tra cũ** — hoạt động; nhân bản Part, stimulus, media, câu hỏi và đáp án nhưng không sao chép lượt làm/kết quả.
+4. **Tạo đề bằng AI** — frontend placeholder để nối AI sau; AI chỉ tạo Draft.
 
-## Import sinh viên
+## 3. Chỉnh sửa và quản trị bài kiểm tra
 
-Excel/CSV:
-- `Họ tên`
-- `MSSV`
-- `Email`
-- `Password`
+- Có nút **Chỉnh sửa bài kiểm tra**.
+- Có thể chỉnh tên, mô tả, lớp, thời lượng, số lần làm, lịch mở/đóng, chống gian lận, số vi phạm cho phép, xem đáp án sau nộp.
+- Sau khi sinh viên đầu tiên bắt đầu:
+  - nội dung đề bị khóa server-side;
+  - không đổi lớp;
+  - không đổi thời lượng;
+  - số lượt làm chỉ có thể tăng.
+- Có **Lưu trữ bài kiểm tra** và **Xóa bài kiểm tra**.
+- Không cho xóa bài kiểm tra nếu đang có sinh viên làm.
+- Nếu đã có lượt làm, xóa vĩnh viễn yêu cầu nhập lại tên bài.
 
-Password chỉ gửi tới Supabase Auth, không lưu plaintext trong bảng `profiles`.
+## 4. Preflight trước khi Publish
 
-## Deploy GitHub Pages
+Trước khi Publish, hệ thống kiểm tra:
 
-Giải nén ZIP rồi upload đè toàn bộ vào root branch `main`:
-- `index.html`
-- `README.md`
-- `assets/app.js`
-- `assets/config.js`
-- `assets/styles.css`
+- đã gán lớp;
+- có câu hỏi;
+- mỗi câu đủ 4 lựa chọn;
+- đáp án đúng hợp lệ;
+- lịch mở/đóng hợp lệ;
+- thống kê Part 5 / Part 6 / Part 7;
+- media demo còn nằm ở GitHub hay chưa.
 
-Sau khi Pages deploy xong, dùng `Ctrl+F5` để tránh cache JS/CSS cũ.
+**Không cho Publish nếu media của TEST 1 / TEST 2 vẫn là đường dẫn GitHub.**
+
+## 5. Chuyển ảnh TEST 1 / TEST 2 vào Supabase Storage
+
+V1.5 vẫn kèm 56 ảnh demo chỉ để làm **nguồn chuyển một lần**.
+
+Vào từng bài:
+
+**Cài đặt → Chuyển media vào Supabase Storage**
+
+Web sẽ:
+
+1. đọc ảnh tĩnh hiện có;
+2. upload sang bucket private `test-media`;
+3. đổi `storage_path` trong Supabase;
+4. sau đó preflight không còn báo media tĩnh.
+
+Sau khi đã chuyển **cả TEST 1 và TEST 2**, nên dùng gói “clean” không chứa thư mục `assets/tests` để ảnh đề không còn tồn tại công khai trên GitHub.
+
+## 6. Bài làm sinh viên
+
+- Hỗ trợ nhiều lượt làm thật sự (`attempt_no`).
+- Reset lượt giữ lịch sử cũ nhưng không tính vào số lượt đã dùng.
+- Bài làm có:
+  - Xem;
+  - Reset lượt;
+  - Xóa bài làm.
+- Reset/Xóa ghi audit log.
+- Excel có cột **Lần làm** và vẫn giữ các lượt đã reset để đối soát.
+
+## 7. Bảo vệ đề và kết quả
+
+- Khi lượt làm đầu tiên bắt đầu, `content_locked_at` được đặt.
+- Các RPC soạn Part / stimulus / câu hỏi đều từ chối chỉnh nội dung sau khi khóa.
+- Deadline vẫn do server quyết định.
+- Autosave/offline queue/client event UUID của bài sinh viên vẫn giữ nguyên.
+- Chống gian lận hiển thị theo cấu hình thật của từng bài, không hard-code “1 lần cảnh báo”.
+
+## Deploy
+
+Upload toàn bộ nội dung ZIP vào root branch `main` của GitHub Pages.
+
+Bản V1.5 đã thêm cache-busting `?v=1.5` cho JS/CSS. Sau deploy vẫn nên Ctrl+F5 một lần.
