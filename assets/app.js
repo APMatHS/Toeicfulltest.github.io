@@ -204,7 +204,7 @@ function staffHeaderActive(){
   if(p==="/teacher") return "home";
   if(p==="/accounts") return "accounts";
   if(p==="/classes" || p.startsWith("/class/")) return "classes";
-  if(p==="/tests" || p.startsWith("/test/") || p.startsWith("/preview/") || p.startsWith("/result/")) return "tests";
+  if(p==="/tests" || p.startsWith("/test/") || p.startsWith("/preview/") || p.startsWith("/practice-result/") || p.startsWith("/result/")) return "tests";
   return "";
 }
 function renderHeader(){
@@ -254,6 +254,11 @@ async function render(){
     const id=p.split("/")[2];
     clearStaffPages();
     return requireStaff(()=>renderStaffPreview(id));
+  }
+  if(p.startsWith("/practice-result/")){
+    const bits=p.split("/");
+    clearStaffPages();
+    return requireStaff(()=>renderStaffPracticeResult(bits[2],bits[3]));
   }
   if(p.startsWith("/result/")){
     const id=p.split("/")[2];
@@ -857,7 +862,7 @@ async function openNewTest(){
 
 
 function testTabs(testId,active){
-  const items=[["overview","Tổng quan"],["live","LIVE"],["submissions","Bài làm"],["authoring","Soạn đề"],["settings","Cài đặt"]];
+  const items=[["overview","Tổng quan"],["practice","Làm thử"],["live","LIVE"],["submissions","Bài làm"],["authoring","Soạn đề"],["settings","Cài đặt"]];
   return `<div class="tabs test-tabs">${items.map(([k,l])=>`<button type="button" class="btn tab test-tab-btn ${active===k?"active":""}" data-tab="${k}" data-test="${testId}">${l}</button>`).join("")}</div>`;
 }
 function saveWorkspaceTabScroll(){
@@ -873,7 +878,7 @@ function setTestUrl(id,tab,push=true){
 }
 async function activateTestTab(id,tab,{push=true,restore=true}={}){
   if(!testWorkspace || testWorkspace.id!==id) return renderTestDetail(id,tab);
-  const valid=["overview","live","submissions","authoring","settings"];
+  const valid=["overview","practice","live","submissions","authoring","settings"];
   if(!valid.includes(tab)) tab="overview";
   saveWorkspaceTabScroll();
   document.querySelectorAll(".test-panel").forEach(el=>el.hidden=el.dataset.panel!==tab);
@@ -886,6 +891,9 @@ async function activateTestTab(id,tab,{push=true,restore=true}={}){
   }else if(tab==="submissions" && !testWorkspace.loaded.submissions){
     testWorkspace.loaded.submissions=true;
     await renderSubmissionsTab(id);
+  }else if(tab==="practice" && !testWorkspace.loaded.practice){
+    testWorkspace.loaded.practice=true;
+    await renderPracticeTab(id);
   }
   const target=(testWorkspace.scrolls?.[tab]??0);
   if(restore) requestAnimationFrame(()=>window.scrollTo({top:target,behavior:"auto"}));
@@ -913,7 +921,7 @@ async function renderTestDetail(id,tab="overview"){
   const locked=!!t.content_locked_at;
   const staticCount=groups.flatMap(g=>g.stimuli||[]).filter(s=>String(s.storage_path||"").startsWith("static:")).length;
 
-  testWorkspace={id,data,t,parts,qs,groups,draft,activeTab:null,scrolls,loaded:{live:false,submissions:false},liveFilter:"all"};
+  testWorkspace={id,data,t,parts,qs,groups,draft,activeTab:null,scrolls,loaded:{practice:false,live:false,submissions:false},liveFilter:"all"};
   const head=`${staffNav("tests")}
   <section class="card">
     <div class="row between wrap">
@@ -930,11 +938,13 @@ async function renderTestDetail(id,tab="overview"){
     ${locked?`<div class="lock-banner"><b>🔒 Nội dung đề đã được khóa</b><span>Từ khi sinh viên đầu tiên bắt đầu, câu hỏi/đáp án/stimulus không thể sửa để bảo toàn kết quả.</span></div>`:""}
     <section class="grid grid-3 part-summary">${parts.map(p=>`<div class="card"><h3>${esc(p.title)}</h3><div class="muted">${esc(p.shuffle_mode)}</div><div class="kpi">${qs.filter(q=>q.part_no===p.part_no).length}</div><div class="muted">câu hỏi</div></div>`).join("")}</section>
     <section class="grid grid-3 overview-actions">
+      <button class="card card-link frozen-link" data-go-tab="practice"><h3>Làm thử</h3><p class="muted">Làm như sinh viên, tự lưu đáp án và xem lại lịch sử các lượt thử.</p></button>
       <button class="card card-link frozen-link" data-go-tab="live"><h3>LIVE</h3><p class="muted">Theo dõi đang làm, đã nộp, tiến độ và vi phạm gần thời gian thực.</p></button>
       <button class="card card-link frozen-link" data-go-tab="submissions"><h3>Bài làm</h3><p class="muted">Xem kết quả, reset/xóa lượt và tải Excel.</p></button>
       <button class="card card-link frozen-link" data-go-tab="authoring"><h3>Soạn đề</h3><p class="muted">Autosave nháp, paste ảnh và phục hồi đúng vị trí.</p></button>
     </section>
   </section>`;
+  const practice=`<section class="test-panel" data-panel="practice" hidden><section id="practiceRoot" class="card"><div class="muted">Lịch sử làm thử sẽ tải khi mở lần đầu.</div></section></section>`;
   const live=`<section class="test-panel" data-panel="live" hidden><section id="liveRoot" class="card"><div class="muted">LIVE sẽ tải một lần khi mở lần đầu.</div></section></section>`;
   const submissions=`<section class="test-panel" data-panel="submissions" hidden><section id="submissionsRoot" class="card"><div class="muted">Bài làm sẽ tải một lần khi mở lần đầu.</div></section></section>`;
   const authoring=`<section class="test-panel" data-panel="authoring" hidden>${renderAuthoringMarkup(id,parts,qs,groups,draft,locked)}</section>`;
@@ -955,7 +965,7 @@ async function renderTestDetail(id,tab="overview"){
     <section class="card danger-zone"><h2>Vùng quản trị</h2><p class="muted">Nếu đã có bài làm, nên lưu trữ thay vì xóa vĩnh viễn. Mọi thao tác đều ghi audit log.</p><div class="row wrap"><button class="secondary" id="archiveTest">Lưu trữ bài kiểm tra</button><button class="danger" id="deleteTest">Xóa bài kiểm tra</button></div></section>
   </section>`;
 
-  view.innerHTML=`<div id="testWorkspace" data-test-id="${id}">${head}${overview}${live}${submissions}${authoring}${settings}</div>`;
+  view.innerHTML=`<div id="testWorkspace" data-test-id="${id}">${head}${overview}${practice}${live}${submissions}${authoring}${settings}</div>`;
   bindTestHeaderActions(id,t,staticCount);
   bindAuthoringActions(id,parts,qs,groups,draft,locked);
   document.querySelector("#editTestSettings")?.addEventListener("click",()=>openEditTest(t));
@@ -1184,6 +1194,17 @@ function bindAuthoringActions(id,parts,qs,groups,draft,locked=false){
       openGroupEditor(id,draft.partId,draft.partNo,draft,existing,groups);
     }
   });
+}
+async function renderPracticeTab(testId){
+  const root=document.querySelector("#practiceRoot");
+  if(!root) return;
+  const {data,error}=await sb.rpc("staff_list_practice_attempts",{p_test_id:testId});
+  if(error) return root.innerHTML=`<div class="warning-box">${esc(error.message)}</div>`;
+  const rows=data||[];
+  const open=rows.find(x=>x.status==="in_progress");
+  root.innerHTML=`<div class="row between wrap"><div><h2>Làm thử như sinh viên</h2><p class="muted">Mỗi đáp án được lưu vào khu vực riêng của giảng viên, không xuất hiện trong LIVE hoặc kết quả lớp.</p></div><a class="btn primary" href="#/preview/${testId}">${open?"Tiếp tục lượt đang làm":"Bắt đầu lượt làm thử"}</a></div>
+  <div class="table-wrap"><table><thead><tr><th>Lượt</th><th>Trạng thái</th><th>Đã trả lời</th><th>Số câu đúng</th><th>Bắt đầu</th><th>Kết thúc</th><th></th></tr></thead>
+  <tbody>${rows.map((x,i)=>`<tr><td>${rows.length-i}</td><td>${x.status==="in_progress"?'<span class="status warn">Đang làm</span>':x.status==="expired"?'<span class="status off">Hết giờ</span>':'<span class="status ok">Đã nộp</span>'}</td><td>${x.answered_count||0}/${x.total_questions||0}</td><td>${x.correct_count==null?"—":`${x.correct_count}/${x.total_questions}`}</td><td>${fmt(x.started_at)}</td><td>${fmt(x.submitted_at)}</td><td>${x.status==="in_progress"?`<a class="btn primary sm" href="#/preview/${testId}">Tiếp tục</a>`:`<a class="btn secondary sm" href="#/practice-result/${testId}/${x.id}">Xem</a>`}</td></tr>`).join("")||'<tr><td colspan="7" class="empty">Chưa có lượt làm thử.</td></tr>'}</tbody></table></div>`;
 }
 async function renderLiveTab(testId){
   const load=async()=>{
@@ -1598,44 +1619,61 @@ async function renderExam(attemptId){
   await hydrateMedia(data.questions||[]);
   drawExam(); bindAntiCheat(); flushAnswerQueue();
 }
+function buildPracticeQuestions(authoring,answers=[]){
+  const groupMap=new Map((authoring?.stimulus_groups||[]).map(g=>[g.id,g]));
+  const savedAnswers=new Map(answers.map(a=>[a.question_id,a]));
+  return (authoring?.questions||[]).slice()
+    .sort((a,b)=>(a.part_no-b.part_no)||(a.source_order-b.source_order)||(a.source_number-b.source_number))
+    .map(q=>{
+      const a=savedAnswers.get(q.id);
+      return {...q,part:q.part_no,number:q.source_number,selected:a?.selected,marked:!!a?.marked,
+        choices:(q.choices||[]).map(c=>({...c,key:c.key||c.choice_key})),
+        stimuli:(groupMap.get(q.stimulus_group_id)?.stimuli||[]).map(s=>({...s,type:s.media_type}))};
+    });
+}
 async function renderStaffPreview(testId){
   showLoading("Đang mở chế độ làm thử...");
-  const {data,error}=await sb.rpc("get_test_authoring",{p_test_id:testId});
-  if(error) return view.innerHTML=`<div class="card"><a href="#/test/${testId}">← Quay lại</a><p>${esc(error.message)}</p></div>`;
-  const t=data?.test||{}, groups=data?.stimulus_groups||[];
-  const groupMap=new Map(groups.map(g=>[g.id,g]));
-  const questions=(data?.questions||[])
-    .slice()
-    .sort((a,b)=>(a.part_no-b.part_no)||(a.source_order-b.source_order)||(a.source_number-b.source_number))
-    .map(q=>({
-      ...q,
-      part:q.part_no,
-      number:q.source_number,
-      choices:(q.choices||[]).map(c=>({...c,key:c.key||c.choice_key})),
-      stimuli:(groupMap.get(q.stimulus_group_id)?.stimuli||[]).map(s=>({...s,type:s.media_type}))
-    }));
+  const {data:start,error:startError}=await sb.rpc("staff_start_practice_attempt",{p_test_id:testId});
+  if(startError) return view.innerHTML=`<div class="card"><a href="#/test/${testId}">← Quay lại</a><p>${esc(startError.message)}</p></div>`;
+  const practiceId=start?.attempt_id;
+  const [{data,error},{data:practice,error:practiceError}]=await Promise.all([
+    sb.rpc("get_test_authoring",{p_test_id:testId}),
+    sb.rpc("staff_get_practice_attempt",{p_attempt_id:practiceId})
+  ]);
+  if(error||practiceError) return view.innerHTML=`<div class="card"><a href="#/test/${testId}">← Quay lại</a><p>${esc((error||practiceError).message)}</p></div>`;
+  const t=data?.test||{};
+  const questions=buildPracticeQuestions(data,practice?.answers||[]);
   if(!questions.length) return view.innerHTML=`<div class="card"><a href="#/test/${testId}">← Quay lại</a><h2>${esc(t.title||"Bài kiểm tra")}</h2><p>Chưa có câu hỏi để làm thử.</p></div>`;
-  const previewId=`preview-${testId}`;
-  const ui=readJSON(attemptUiKey(previewId),{current:0});
+  if(practice?.attempt?.status!=="in_progress") return renderStoredPracticeResult(testId,practiceId,questions,practice.attempt);
+  const ui=readJSON(attemptUiKey(practiceId),{current:0});
   examState={
-    attemptId:previewId,
+    attemptId:practiceId,
     preview:true,
+    persistedPractice:true,
     testId,
     payload:{
       test:t,
       questions,
-      attempt:{
-        expires_at:new Date(Date.now()+(Number(t.duration_minutes)||75)*60000).toISOString(),
+      attempt:{...practice.attempt,
         anti_cheat_mode:"off",
-        violation_count:0,
-        allowed_violations:0
+        violation_count:0, allowed_violations:0
       }
     },
     current:Math.min(ui.current||0,questions.length-1),
-    saveStatus:"Làm thử · không lưu kết quả"
+    saveStatus:start?.resumed?"Đã phục hồi lượt làm thử":"Lượt làm thử đã được lưu"
   };
   await hydrateMedia(questions);
   drawExam();
+}
+async function renderStaffPracticeResult(testId,attemptId){
+  showLoading("Đang tải kết quả làm thử...");
+  const [{data,error},{data:practice,error:practiceError}]=await Promise.all([
+    sb.rpc("get_test_authoring",{p_test_id:testId}),
+    sb.rpc("staff_get_practice_attempt",{p_attempt_id:attemptId})
+  ]);
+  if(error||practiceError) return view.innerHTML=`<div class="card"><a href="#/test/${testId}/practice">← Quay lại</a><p>${esc((error||practiceError).message)}</p></div>`;
+  const questions=buildPracticeQuestions(data,practice?.answers||[]);
+  renderStoredPracticeResult(testId,attemptId,questions,practice?.attempt||{});
 }
 function mergeQueuedAnswers(attemptId,questions){
   const queue=readJSON(attemptQueueKey(attemptId),[]);
@@ -1685,7 +1723,7 @@ function drawExam(){
   if(!q) return view.innerHTML=`<div class="card">Không có câu hỏi.</div>`;
   const antiText=examState.preview?"Chế độ giảng viên làm thử · không tạo lượt làm":a.anti_cheat_mode==="off"?"Chống gian lận: Tắt":a.anti_cheat_mode==="strict"?`Vi phạm: ${a.violation_count||0} · chế độ nghiêm ngặt`:`Vi phạm: ${a.violation_count||0}/${a.allowed_violations??1} mức cảnh báo`;
   saveAttemptUi();
-  view.innerHTML=`${examState.preview?`<section class="card preview-banner"><div class="row between wrap"><div><b>Chế độ làm thử</b><div class="muted">Giao diện như sinh viên · đáp án và kết quả không được ghi vào hệ thống</div></div><a class="btn secondary" href="#/test/${examState.testId}">← Thoát làm thử</a></div></section>`:""}<section class="exam-layout"><div class="exam-main">
+  view.innerHTML=`${examState.preview?`<section class="card preview-banner"><div class="row between wrap"><div><b>Chế độ làm thử</b><div class="muted">Giao diện như sinh viên · tự lưu trong lịch sử riêng của giảng viên</div></div><a class="btn secondary" href="#/test/${examState.testId}/practice">← Thoát làm thử</a></div></section>`:""}<section class="exam-layout"><div class="exam-main">
     <div class="card"><div class="row between wrap"><div><b>Part ${q.part}</b><div class="muted">Câu ${q.number} · ${current+1}/${payload.questions.length}</div></div><div class="exam-status"><span id="saveStatus" class="save-status">${esc(examState.saveStatus||"Đã lưu")}</span><div id="timer" class="timer"></div></div></div></div>
     ${(q.stimuli||[]).map(s=>`<div class="stimulus">${renderMedia(s.type,s.url,s.content)}</div>`).join("")}
     <div class="card question">
@@ -1723,13 +1761,22 @@ async function saveCurrent(choice,marked=document.querySelector("#markReview")?.
   if(!examState) return;
   const q=examState.payload.questions[examState.current];
   q.marked=marked;
-  if(!choice){ setSaveStatus("Đã lưu tạm đánh dấu","local"); return; }
-  q.selected=choice;
   if(examState.preview){
-    setSaveStatus("Đã chọn tạm · không ghi dữ liệu","saved");
+    if(choice) q.selected=choice;
     drawPaletteOnly();
+    setSaveStatus("Đang lưu…","pending");
+    const savePromise=sb.rpc("staff_save_practice_answer",{
+      p_attempt_id:examState.attemptId,p_question_id:q.id,p_choice:choice||null,p_marked:marked
+    });
+    examState.pendingSave=savePromise;
+    const {error}=await savePromise;
+    if(examState?.pendingSave===savePromise) examState.pendingSave=null;
+    if(error) return setSaveStatus(`Chưa lưu: ${error.message}`,"offline");
+    setSaveStatus("Đã lưu","saved");
     return;
   }
+  if(!choice){ setSaveStatus("Đã lưu tạm đánh dấu","local"); return; }
+  q.selected=choice;
   const ev={client_event_id:crypto.randomUUID(),question_id:q.id,choice,marked,created_at:Date.now()};
   enqueueAnswer(examState.attemptId,ev);
   setSaveStatus(navigator.onLine?"Đang lưu…":"Mất mạng – đã lưu tạm",navigator.onLine?"pending":"offline");
@@ -1773,7 +1820,7 @@ function updateTimer(){
   el.classList.toggle("danger-text",s<300);
   if(left<=0){
     clearInterval(timerId);
-    if(examState.preview) renderPreviewResult();
+    if(examState.preview) renderPreviewResult("expired");
     else go(`/result/${examState.attemptId}`);
   }
 }
@@ -1784,7 +1831,7 @@ function confirmSubmit(){
       <div class="row between"><button class="secondary" data-close>Tiếp tục làm</button><button class="primary" id="finishPreview">Xem kết quả thử</button></div>
     </div></div>`;
     modalRoot.querySelector("[data-close]").onclick=closeModal;
-    modalRoot.querySelector("#finishPreview").onclick=()=>{closeModal();renderPreviewResult()};
+    modalRoot.querySelector("#finishPreview").onclick=()=>{closeModal();renderPreviewResult("submitted")};
     return;
   }
   modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal">
@@ -1805,17 +1852,25 @@ function confirmSubmit(){
     closeModal(); go(`/result/${examState.attemptId}`);
   };
 }
-function renderPreviewResult(){
+async function renderPreviewResult(status="submitted"){
   if(!examState?.preview) return;
   clearInterval(timerId); timerId=null;
+  if(examState.pendingSave) await examState.pendingSave;
   const {questions}=examState.payload, testId=examState.testId;
-  const correct=questions.filter(q=>q.selected && q.selected===q.correct_choice_key).length;
+  const attemptId=examState.attemptId;
+  const {data,error}=await sb.rpc("staff_finish_practice_attempt",{p_attempt_id:attemptId,p_status:status});
+  if(error) return toast(error.message,6000);
+  localStorage.removeItem(attemptUiKey(attemptId));
+  renderStoredPracticeResult(testId,attemptId,questions,{...data,status});
+}
+function renderStoredPracticeResult(testId,attemptId,questions,attempt={}){
+  clearInterval(timerId); timerId=null;
+  const correct=attempt.correct_count??questions.filter(q=>q.selected && q.selected===q.correct_choice_key).length;
   const answered=questions.filter(q=>q.selected).length;
-  localStorage.removeItem(attemptUiKey(examState.attemptId));
   view.innerHTML=`<section class="card">
     <span class="eyebrow">Kết quả làm thử</span><h1>${correct}/${questions.length} câu đúng</h1>
-    <p class="muted">Đã trả lời ${answered}/${questions.length} câu. Kết quả không được ghi vào bài làm sinh viên.</p>
-    <div class="row wrap"><button class="primary" id="retryPreview">Làm thử lại</button><a class="btn secondary" href="#/test/${testId}">← Về bài kiểm tra</a></div>
+    <p class="muted">Đã trả lời ${answered}/${questions.length} câu. Lượt này đã lưu trong lịch sử làm thử riêng của giảng viên.</p>
+    <div class="row wrap"><button class="primary" id="retryPreview">Làm lượt mới</button><a class="btn secondary" href="#/test/${testId}/practice">← Về lịch sử làm thử</a></div>
   </section>
   <section class="card result-list"><h2>Đối chiếu đáp án</h2>${questions.map(q=>`<div class="result-row"><b>Câu ${q.number}</b> · Đã chọn: <b>${esc(q.selected||"—")}</b> · Đáp án: <b>${esc(q.correct_choice_key||"—")}</b> · <span class="${q.selected===q.correct_choice_key?"correct":"wrong"}">${q.selected===q.correct_choice_key?"Đúng":"Sai"}</span></div>`).join("")}</section>`;
   examState=null;
