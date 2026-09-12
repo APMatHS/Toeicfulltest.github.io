@@ -6,7 +6,7 @@ import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js";
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const appView = document.querySelector("#view");
 let view = appView;
-const sessionActions = document.querySelector("#sessionActions");\nconst staffHeaderNav = document.querySelector("#staffHeaderNav");
+const sessionActions = document.querySelector("#sessionActions");
 const toastEl = document.querySelector("#toast");
 const modalRoot = document.querySelector("#modalRoot");
 
@@ -198,31 +198,10 @@ async function loadProfile(){
   if(error){ console.error(error); profile=null; return; }
   profile=data;
 }
-function staffHeaderActive(){
-  const p=route();
-  if(p==="/teacher") return "home";
-  if(p==="/accounts") return "accounts";
-  if(p==="/classes" || p.startsWith("/class/")) return "classes";
-  if(p==="/tests" || p.startsWith("/test/") || p.startsWith("/result/")) return "tests";
-  return "";
-}
 function renderHeader(){
   if(!session){
-    if(staffHeaderNav){ staffHeaderNav.hidden=true; staffHeaderNav.innerHTML=""; }
     sessionActions.innerHTML = `<a class="btn ghost header-btn" href="#/login">Đăng nhập</a>`;
     return;
-  }
-  const isStaff=["teacher","system_admin"].includes(profile?.role);
-  if(staffHeaderNav){
-    staffHeaderNav.hidden=!isStaff;
-    if(isStaff){
-      const active=staffHeaderActive();
-      staffHeaderNav.innerHTML=`
-        <a class="header-nav-link ${active==="home"?"active":""}" href="#/teacher">Tổng quan</a>
-        <a class="header-nav-link ${active==="accounts"?"active":""}" href="#/accounts">Tài khoản</a>
-        <a class="header-nav-link ${active==="classes"?"active":""}" href="#/classes">Lớp</a>
-        <a class="header-nav-link ${active==="tests"?"active":""}" href="#/tests">Bài kiểm tra</a>`;
-    }
   }
   sessionActions.innerHTML = `
     <a class="user-name small profile-link" href="#/profile" title="Hồ sơ">${esc(profile?.full_name || session.user.email)} · ${esc(roleLabel(profile?.role||""))}</a>
@@ -268,10 +247,6 @@ async function render(){
   if(p==="/teacher") return requireStaff(()=>showStaffPage("teacher",renderTeacher));
   if(p==="/accounts") return requireStaff(()=>showStaffPage("accounts",renderAccounts));
   if(p==="/classes") return requireStaff(()=>showStaffPage("classes",renderClasses));
-  if(p.startsWith("/class/")){
-    const id=p.split("/")[2];
-    return requireStaff(()=>showStaffPage(`class:${id}`,()=>renderClassDetail(id)));
-  }
   if(p==="/tests") return requireStaff(()=>showStaffPage("tests",renderTests));
   if(p.startsWith("/test/")){
     const bits=p.split("/"),id=bits[2],tab=bits[3]||"overview";
@@ -393,7 +368,14 @@ async function renderProfile(){
   };
 }
 
-function staffNav(_active){ return ""; }
+function staffNav(active){
+  return `<div class="tabs">
+    <a class="btn tab ${active==="home"?"active":""}" href="#/teacher">Tổng quan</a>
+    <a class="btn tab ${active==="accounts"?"active":""}" href="#/accounts">Tài khoản</a>
+    <a class="btn tab ${active==="classes"?"active":""}" href="#/classes">Lớp</a>
+    <a class="btn tab ${active==="tests"?"active":""}" href="#/tests">Bài kiểm tra</a>
+  </div>`;
+}
 async function renderTeacher(){
   if(!staffDataCache.users||!staffDataCache.classes||!staffDataCache.tests) showLoading();
   await prefetchStaffData();
@@ -423,24 +405,24 @@ async function renderAccounts(){
   await prefetchStaffData();
   const users=staffDataCache.users||[];
   const classes=[...(staffDataCache.classes||[])].sort((a,b)=>String(a.name||"").localeCompare(String(b.name||""),"vi"));
-  const classById=Object.fromEntries(classes.map(c=>[c.id,c]));
   view.innerHTML=`${staffNav("accounts")}
   <section class="card">
     <div class="row between wrap">
-      <div><h1>Tài khoản</h1><p class="muted">Tài khoản tồn tại độc lập với lớp.</p></div>
+      <div><h1>Tài khoản</h1><p class="muted">Có thể tạo từng tài khoản hoặc nhập Excel/CSV kèm mật khẩu ban đầu.</p></div>
       <div class="row wrap">
         <button class="secondary" id="bulkUser">↑ Nhập danh sách SV</button>
         <button class="primary" id="newUser">+ Tạo tài khoản</button>
       </div>
     </div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Họ tên</th><th>Vai trò</th><th>Mã SV</th><th>Lớp</th><th>Trạng thái</th><th>Ngày tạo</th></tr></thead>
-      <tbody>${users.map(x=>`<tr>
-        <td>${esc(x.full_name)}</td><td>${esc(roleLabel(x.role))}</td><td>${esc(x.student_code||"—")}</td>
-        <td>${x.role==="student"?(x.class_id?`<a href="#/class/${x.class_id}">${esc(classById[x.class_id]?.name||"Lớp")}</a>`:"Chưa gán"):"—"}</td>
-        <td>${x.is_active?'<span class="status ok">Hoạt động</span>':'<span class="status off">Khóa</span>'}</td>
-        <td>${fmt(x.created_at)}</td></tr>`).join("")||`<tr><td colspan="6" class="empty">Chưa có tài khoản</td></tr>`}</tbody>
-    </table></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Họ tên</th><th>Vai trò</th><th>Mã SV</th><th>Trạng thái</th><th>Ngày tạo</th></tr></thead>
+        <tbody>${users.map(x=>`<tr>
+          <td>${esc(x.full_name)}</td><td>${esc(roleLabel(x.role))}</td><td>${esc(x.student_code||"—")}</td>
+          <td>${x.is_active?'<span class="status ok">Hoạt động</span>':'<span class="status off">Khóa</span>'}</td>
+          <td>${fmt(x.created_at)}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">Chưa có tài khoản</td></tr>`}</tbody>
+      </table>
+    </div>
   </section>`;
   document.querySelector("#newUser").onclick=()=>openNewUser(classes);
   document.querySelector("#bulkUser").onclick=()=>openBulkStudents(classes);
@@ -462,7 +444,7 @@ function openNewUser(classes=[]){
   modalRoot.querySelector("#newUserForm").onsubmit=async e=>{
     e.preventDefault();
     const f=Object.fromEntries(new FormData(e.target));
-    const btn=e.submitter || e.target.querySelector("button[type='submit'],button:not([type])");
+    const btn=e.target.querySelector("button[type='submit']");
     btn.disabled=true; btn.textContent="Đang tạo...";
     const {data,error}=await sb.functions.invoke("manage-user",{body:{
       action:"create_user",...f,student_code:f.student_code||null,class_id:f.class_id||null
@@ -549,145 +531,33 @@ function openBulkStudents(classes=[]){
 }
 
 async function renderClasses(){
-  if(!staffDataCache.classes||!staffDataCache.users) showLoading();
+  if(!staffDataCache.classes) showLoading();
   await prefetchStaffData();
-  const data=staffDataCache.classes||[],users=staffDataCache.users||[];
-  const countStudents=id=>users.filter(x=>x.role==="student"&&x.class_id===id).length;
+  const data=staffDataCache.classes||[];
   view.innerHTML=`${staffNav("classes")}
   <section class="card">
-    <div class="row between wrap"><div><h1>Lớp</h1><p class="muted">Nhấn tên lớp để quản lý thành viên.</p></div><button id="newClass" class="primary">+ Tạo lớp</button></div>
-    <div class="table-wrap"><table><thead><tr><th>Tên lớp</th><th>Sinh viên</th><th>Học kỳ</th><th>Năm học</th><th>Ngày tạo</th><th></th></tr></thead>
-    <tbody>${data.map(x=>`<tr><td><a class="class-name-link" href="#/class/${x.id}"><b>${esc(x.name)}</b></a></td>
-      <td>${countStudents(x.id)}</td><td>${esc(x.semester||"—")}</td><td>${esc(x.academic_year||"—")}</td><td>${fmt(x.created_at)}</td>
-      <td><a class="btn secondary sm" href="#/class/${x.id}">Chi tiết</a></td></tr>`).join("")||`<tr><td colspan="6" class="empty">Chưa có lớp</td></tr>`}</tbody></table></div>
+    <div class="row between wrap"><div><h1>Lớp</h1><p class="muted">Tạo và quản lý lớp học.</p></div><button id="newClass" class="primary">+ Tạo lớp</button></div>
+    <div class="table-wrap"><table><thead><tr><th>Tên lớp</th><th>Học kỳ</th><th>Năm học</th><th>Ngày tạo</th></tr></thead>
+    <tbody>${data.map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.semester||"—")}</td><td>${esc(x.academic_year||"—")}</td><td>${fmt(x.created_at)}</td></tr>`).join("")||`<tr><td colspan="4" class="empty">Chưa có lớp</td></tr>`}</tbody></table></div>
   </section>`;
-  document.querySelector("#newClass").onclick=()=>openClass();
+  document.querySelector("#newClass").onclick=openClass;
 }
-function openClass(existing=null){
-  const editing=!!existing;
+function openClass(){
   modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal">
-    <div class="row between"><h2>${editing?"Chỉnh sửa lớp":"Tạo lớp"}</h2><button type="button" class="ghost sm" data-close>Đóng</button></div>
+    <div class="row between"><h2>Tạo lớp</h2><button class="ghost sm" data-close>Đóng</button></div>
     <form id="classForm" class="stack">
-      <label>Tên lớp<input name="name" value="${esc(existing?.name||"")}" required></label>
-      <label>Học kỳ<input name="semester" value="${esc(existing?.semester||"")}" placeholder="HK1"></label>
-      <label>Năm học<input name="academic_year" value="${esc(existing?.academic_year||"")}" placeholder="2026-2027"></label>
-      <button type="submit" class="primary">${editing?"Lưu thay đổi":"Tạo lớp"}</button>
+      <label>Tên lớp<input name="name" required></label>
+      <label>Học kỳ<input name="semester" placeholder="HK1"></label>
+      <label>Năm học<input name="academic_year" placeholder="2026-2027"></label>
+      <button class="primary">Tạo lớp</button>
     </form></div></div>`;
   modalRoot.querySelector("[data-close]").onclick=closeModal;
   modalRoot.querySelector("#classForm").onsubmit=async e=>{
     e.preventDefault();
     const f=Object.fromEntries(new FormData(e.target));
-    const btn=e.submitter||e.target.querySelector('button[type="submit"]');
-    btn.disabled=true;
-    let error;
-    if(editing) ({error}=await sb.from("classes").update(f).eq("id",existing.id));
-    else ({error}=await sb.from("classes").insert({...f,created_by:session.user.id}));
-    btn.disabled=false;
-    if(error) return toast(error.message,6000);
-    closeModal();
-    invalidateStaffData("classes");
-    invalidateStaffPage("classes");invalidateStaffPage("teacher");invalidateStaffPage("tests");
-    if(editing){
-      invalidateStaffPage(`class:${existing.id}`);
-      toast("Đã cập nhật lớp");
-      return showStaffPage(`class:${existing.id}`,()=>renderClassDetail(existing.id));
-    }
-    toast("Đã tạo lớp");
-    showStaffPage("classes",renderClasses);
-  };
-}
-async function setStudentClass(studentId,classId){
-  const {error}=await sb.rpc("staff_set_student_class",{p_student_id:studentId,p_class_id:classId||null});
-  if(error) throw error;
-  invalidateStaffData("users");
-  invalidateStaffPage("accounts");invalidateStaffPage("teacher");invalidateStaffPage("classes");
-}
-async function renderClassDetail(classId){
-  showLoading("Đang tải lớp...");
-  await prefetchStaffData();
-  const cls=(staffDataCache.classes||[]).find(x=>x.id===classId);
-  if(!cls){view.innerHTML=`<section class="card"><a href="#/classes">← Lớp</a><h2>Không tìm thấy lớp</h2></section>`;return;}
-  const users=staffDataCache.users||[];
-  const students=users.filter(x=>x.role==="student"&&x.class_id===classId).sort((a,b)=>String(a.full_name||"").localeCompare(String(b.full_name||""),"vi"));
-  const tests=(staffDataCache.tests||[]).filter(x=>x.class_id===classId);
-  view.innerHTML=`${staffNav("classes")}
-  <section class="card class-detail-head">
-    <div class="row between wrap">
-      <div><a class="muted" href="#/classes">← Danh sách lớp</a><h1>${esc(cls.name)}</h1>
-        <div class="row wrap"><span class="badge">${students.length} sinh viên</span><span class="badge">${tests.length} bài kiểm tra</span></div>
-      </div>
-      <button id="editClass" class="secondary">✎ Chỉnh sửa lớp</button>
-    </div>
-    <div class="class-meta-grid">
-      <div><span>Học kỳ</span><b>${esc(cls.semester||"—")}</b></div>
-      <div><span>Năm học</span><b>${esc(cls.academic_year||"—")}</b></div>
-      <div><span>Ngày tạo</span><b>${fmt(cls.created_at)}</b></div>
-    </div>
-  </section>
-  <section class="card class-members-card">
-    <div class="row between wrap"><div><h2>Thành viên lớp</h2><p class="muted">Bỏ khỏi lớp không xóa tài khoản.</p></div><button id="addStudentsToClass" class="primary">+ Thêm sinh viên</button></div>
-    <div class="table-wrap"><table><thead><tr><th>Họ tên</th><th>MSSV</th><th>Email</th><th>Trạng thái</th><th></th></tr></thead>
-    <tbody>${students.map(s=>`<tr><td><b>${esc(s.full_name)}</b></td><td>${esc(s.student_code||"—")}</td><td>${esc(s.email||"—")}</td>
-      <td>${s.is_active?'<span class="status ok">Hoạt động</span>':'<span class="status off">Khóa</span>'}</td>
-      <td><button class="ghost sm remove-class-member" data-id="${s.id}" data-name="${esc(s.full_name)}">Bỏ khỏi lớp</button></td></tr>`).join("")||`<tr><td colspan="5" class="empty">Lớp chưa có sinh viên.</td></tr>`}</tbody></table></div>
-  </section>`;
-  document.querySelector("#editClass").onclick=()=>openClass(cls);
-  document.querySelector("#addStudentsToClass").onclick=()=>openAddStudentsToClass(cls,users);
-  document.querySelectorAll(".remove-class-member").forEach(b=>b.onclick=()=>confirmRemoveStudentFromClass(cls,b.dataset.id,b.dataset.name));
-}
-function confirmRemoveStudentFromClass(cls,studentId,name){
-  modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal">
-    <h2>Bỏ sinh viên khỏi lớp?</h2>
-    <p><b>${esc(name||"Sinh viên")}</b> sẽ được bỏ khỏi <b>${esc(cls.name)}</b>.</p>
-    <div class="warning-box">Tài khoản sinh viên vẫn được giữ nguyên.</div>
-    <div class="row between"><button type="button" class="secondary" data-close>Hủy</button><button type="button" class="danger" id="doRemoveStudent">Bỏ khỏi lớp</button></div>
-  </div></div>`;
-  modalRoot.querySelector("[data-close]").onclick=closeModal;
-  modalRoot.querySelector("#doRemoveStudent").onclick=async()=>{
-    try{
-      await setStudentClass(studentId,null);
-      closeModal();toast("Đã bỏ sinh viên khỏi lớp");
-      invalidateStaffPage(`class:${cls.id}`);
-      await showStaffPage(`class:${cls.id}`,()=>renderClassDetail(cls.id));
-    }catch(err){toast(err.message,6000);}
-  };
-}
-function openAddStudentsToClass(cls,users){
-  const classes=staffDataCache.classes||[],classById=Object.fromEntries(classes.map(c=>[c.id,c]));
-  const candidates=users.filter(x=>x.role==="student"&&x.class_id!==cls.id).sort((a,b)=>String(a.full_name||"").localeCompare(String(b.full_name||""),"vi"));
-  modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal wide">
-    <div class="row between wrap"><div><h2>Thêm sinh viên vào ${esc(cls.name)}</h2><p class="muted">Sinh viên đang ở lớp khác sẽ được chuyển sang lớp này.</p></div><button type="button" class="ghost sm" data-close>Đóng</button></div>
-    <label class="member-search">Tìm sinh viên<input id="memberSearch" placeholder="Họ tên, MSSV hoặc email"></label>
-    <div class="member-picker">${candidates.map(s=>`<label class="member-pick-row" data-search="${esc(`${s.full_name||""} ${s.student_code||""} ${s.email||""}`.toLowerCase())}">
-      <input type="checkbox" value="${s.id}">
-      <span><b>${esc(s.full_name)}</b><small>${esc(s.student_code||"—")} · ${esc(s.email||"—")}${s.class_id?` · đang ở ${esc(classById[s.class_id]?.name||"lớp khác")}`:" · chưa có lớp"}</small></span>
-    </label>`).join("")||`<div class="empty">Không còn sinh viên để thêm.</div>`}</div>
-    <div class="row between"><span id="selectedMemberCount" class="muted">0 sinh viên được chọn</span><button type="button" class="primary" id="doAddStudents" ${candidates.length?"":"disabled"}>Thêm vào lớp</button></div>
-  </div></div>`;
-  modalRoot.querySelector("[data-close]").onclick=closeModal;
-  const search=modalRoot.querySelector("#memberSearch");
-  const rows=[...modalRoot.querySelectorAll(".member-pick-row")];
-  const checks=[...modalRoot.querySelectorAll('.member-pick-row input[type="checkbox"]')];
-  const count=modalRoot.querySelector("#selectedMemberCount");
-  const sync=()=>count.textContent=`${checks.filter(x=>x.checked).length} sinh viên được chọn`;
-  checks.forEach(x=>x.onchange=sync);
-  search.oninput=()=>{
-    const q=search.value.trim().toLowerCase();
-    rows.forEach(r=>r.hidden=q&&!r.dataset.search.includes(q));
-  };
-  modalRoot.querySelector("#doAddStudents").onclick=async()=>{
-    const ids=checks.filter(x=>x.checked).map(x=>x.value);
-    if(!ids.length)return toast("Chưa chọn sinh viên.");
-    const btn=modalRoot.querySelector("#doAddStudents");btn.disabled=true;
-    try{
-      for(let i=0;i<ids.length;i++){
-        btn.textContent=`Đang thêm ${i+1}/${ids.length}…`;
-        await setStudentClass(ids[i],cls.id);
-      }
-      closeModal();toast(`Đã thêm ${ids.length} sinh viên`);
-      invalidateStaffPage(`class:${cls.id}`);
-      await showStaffPage(`class:${cls.id}`,()=>renderClassDetail(cls.id));
-    }catch(err){btn.disabled=false;btn.textContent="Thêm vào lớp";toast(err.message,7000);}
+    const {error}=await sb.from("classes").insert({...f,created_by:session.user.id});
+    if(error) return toast(error.message);
+    closeModal(); toast("Đã tạo lớp"); invalidateStaffData("classes"); invalidateStaffPage("classes"); invalidateStaffPage("teacher"); invalidateStaffPage("tests"); showStaffPage("classes",renderClasses);
   };
 }
 
@@ -745,7 +615,7 @@ async function openNewTest(){
         <label class="span-2">Mô tả<textarea name="description" rows="3"></textarea></label>
         <label class="check-row span-2"><input type="checkbox" name="show_answers_after_submit" checked> Cho xem đáp án sau khi nộp</label>
         <div class="span-2 warning-box"><b>Tạo thủ công</b><br>Web tạo sẵn Part 5, 6, 7. Sau đó giảng viên vào Soạn đề để thêm stimulus, câu hỏi, ảnh/audio và đáp án.</div>
-        <button type="submit" class="primary span-2">Tạo bài nháp</button>
+        <button class="primary span-2">Tạo bài nháp</button>
       </form>
     </section>
 
@@ -773,7 +643,7 @@ async function openNewTest(){
         <label>Mở lúc<input type="datetime-local" name="opens_at"></label>
         <label>Đóng lúc<input type="datetime-local" name="closes_at"></label>
         <div class="span-2 warning-box"><b>Chỉ sao chép nội dung đề.</b><br>Part, stimulus, media, câu hỏi và đáp án được nhân bản. Lượt làm, điểm, LIVE và vi phạm của bài cũ không được sao chép.</div>
-        <button type="submit" class="primary span-2">Tạo bản sao</button>
+        <button class="primary span-2">Tạo bản sao</button>
       </form>
     </section>
 
@@ -806,27 +676,14 @@ async function openNewTest(){
   modalRoot.querySelector("#manualTestForm").onsubmit=async e=>{
     e.preventDefault();
     const fd=new FormData(e.target),f=Object.fromEntries(fd);
-    f.class_id=f.class_id||null;
-    f.duration_minutes=Number(f.duration_minutes);
-    f.max_attempts=Number(f.max_attempts);
-    ["opens_at","closes_at"].forEach(k=>f[k]=f[k]?new Date(f[k]).toISOString():null);
+    ["opens_at","closes_at"].forEach(k=>f[k]=f[k]?new Date(f[k]).toISOString():"");
     Object.assign(f,{status:"draft",show_answers_after_submit:fd.has("show_answers_after_submit"),allowed_violations:1});
-    const btn=e.submitter || e.target.querySelector("button[type='submit'],button:not([type])");
-    btn.disabled=true;btn.textContent="Đang tạo…";
+    const btn=e.target.querySelector("button[type='submit']");btn.disabled=true;btn.textContent="Đang tạo…";
     try{
-      const {data,error}=await sb.rpc("staff_upsert_test",{p_data:f});
-      if(error) throw error;
-      const testId=typeof data==="string"?data:(data?.id||data?.test_id);
-      if(!testId) throw new Error("Backend không trả về mã bài kiểm tra.");
-      await createReadingParts(testId);
-      invalidateStaffData("tests");invalidateStaffPage("tests");invalidateStaffPage("teacher");
-      closeModal();toast("Đã tạo bài kiểm tra nháp");go(`/test/${testId}/authoring`);
-    }catch(err){
-      console.error(err);
-      toast(`Không tạo được bài: ${err.message||err}`,7000);
-    }finally{
-      btn.disabled=false;btn.textContent="Tạo bài nháp";
-    }
+      const {data,error}=await sb.rpc("staff_upsert_test",{p_data:f}); if(error) throw error;
+      await createReadingParts(data);
+      invalidateStaffData("tests"); invalidateStaffPage("tests"); invalidateStaffPage("teacher"); closeModal(); toast("Đã tạo bài kiểm tra nháp"); go(`/test/${data}`);
+    }catch(err){toast(err.message,6000)}finally{btn.disabled=false;btn.textContent="Tạo bài nháp";}
   };
 
   const cloneForm=modalRoot.querySelector("#cloneTestForm");
@@ -841,7 +698,7 @@ async function openNewTest(){
     e.preventDefault();
     const f=Object.fromEntries(new FormData(e.target)); const source=f.source_test_id; delete f.source_test_id;
     ["opens_at","closes_at"].forEach(k=>f[k]=f[k]?new Date(f[k]).toISOString():"");
-    const btn=e.submitter || e.target.querySelector("button[type='submit'],button:not([type])");btn.disabled=true;btn.textContent="Đang nhân bản…";
+    const btn=e.target.querySelector("button[type='submit']");btn.disabled=true;btn.textContent="Đang nhân bản…";
     const {data,error}=await sb.rpc("staff_clone_test",{p_source_test_id:source,p_overrides:f});
     btn.disabled=false;btn.textContent="Tạo bản sao";
     if(error) return toast(error.message,6000);
@@ -1037,7 +894,7 @@ async function openEditTest(t){
     f.max_attempts=+f.max_attempts; f.allowed_violations=+f.allowed_violations;
     f.show_answers_after_submit=fd.has("show_answers_after_submit");
     ["opens_at","closes_at"].forEach(k=>f[k]=f[k]?new Date(f[k]).toISOString():"");
-    const btn=e.submitter || e.target.querySelector("button[type='submit'],button:not([type])");btn.disabled=true;btn.textContent="Đang lưu…";
+    const btn=e.target.querySelector("button[type='submit']");btn.disabled=true;btn.textContent="Đang lưu…";
     const {error}=await sb.rpc("staff_upsert_test",{p_data:f});
     btn.disabled=false;btn.textContent="Lưu thay đổi";
     if(error) return toast(error.message,6000);
@@ -1440,7 +1297,7 @@ function openQuestionEditor(testId, partId, partNo, allGroups, existing=null, dr
   form.onsubmit=async e=>{
     e.preventDefault();
     const fd=new FormData(e.target);
-    const btn=e.submitter || e.target.querySelector("button[type='submit'],button:not([type])"); btn.disabled=true; btn.textContent="Đang lưu...";
+    const btn=e.target.querySelector("button[type='submit']"); btn.disabled=true; btn.textContent="Đang lưu...";
     try{
       const choiceRows=["A","B","C","D"].map(k=>({
         key:k,
