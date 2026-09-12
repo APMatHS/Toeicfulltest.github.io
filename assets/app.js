@@ -204,7 +204,7 @@ function staffHeaderActive(){
   if(p==="/teacher") return "home";
   if(p==="/accounts") return "accounts";
   if(p==="/classes" || p.startsWith("/class/")) return "classes";
-  if(p==="/tests" || p.startsWith("/test/") || p.startsWith("/result/")) return "tests";
+  if(p==="/tests" || p.startsWith("/test/") || p.startsWith("/preview/") || p.startsWith("/result/")) return "tests";
   return "";
 }
 function renderHeader(){
@@ -249,6 +249,11 @@ async function render(){
   if(p.startsWith("/exam/")){
     clearStaffPages();
     return renderExam(p.split("/")[2]);
+  }
+  if(p.startsWith("/preview/")){
+    const id=p.split("/")[2];
+    clearStaffPages();
+    return requireStaff(()=>renderStaffPreview(id));
   }
   if(p.startsWith("/result/")){
     const id=p.split("/")[2];
@@ -915,7 +920,7 @@ async function renderTestDetail(id,tab="overview"){
       <div><a href="#/tests" class="muted">← Danh sách</a><h1>${esc(t.title)}</h1>
         <div class="row wrap">${statusBadge(t.status)}<span class="badge">${t.duration_minutes} phút</span><span class="badge">${qs.length} câu</span><span class="badge">${t.max_attempts} lượt</span>${locked?'<span class="status warn">🔒 Đã khóa nội dung</span>':''}</div>
       </div>
-      <div class="row wrap"><button class="ghost" id="editTestTop">✎ Chỉnh sửa</button><button class="secondary" id="exportExcelTop">↓ Excel</button><button id="publishBtn" class="${t.status==="published"?"secondary":"primary"}">${t.status==="published"?"Đóng bài":"Xuất bản"}</button></div>
+      <div class="row wrap"><a class="btn secondary" href="#/preview/${id}">▶ Làm thử</a><button class="ghost" id="editTestTop">✎ Chỉnh sửa</button><button class="secondary" id="exportExcelTop">↓ Excel</button><button id="publishBtn" class="${t.status==="published"?"secondary":"primary"}">${t.status==="published"?"Đóng bài":"Xuất bản"}</button></div>
     </div>
   </section>
   ${testTabs(id,tab)}`;
@@ -1593,6 +1598,45 @@ async function renderExam(attemptId){
   await hydrateMedia(data.questions||[]);
   drawExam(); bindAntiCheat(); flushAnswerQueue();
 }
+async function renderStaffPreview(testId){
+  showLoading("Đang mở chế độ làm thử...");
+  const {data,error}=await sb.rpc("get_test_authoring",{p_test_id:testId});
+  if(error) return view.innerHTML=`<div class="card"><a href="#/test/${testId}">← Quay lại</a><p>${esc(error.message)}</p></div>`;
+  const t=data?.test||{}, groups=data?.stimulus_groups||[];
+  const groupMap=new Map(groups.map(g=>[g.id,g]));
+  const questions=(data?.questions||[])
+    .slice()
+    .sort((a,b)=>(a.part_no-b.part_no)||(a.source_order-b.source_order)||(a.source_number-b.source_number))
+    .map(q=>({
+      ...q,
+      part:q.part_no,
+      number:q.source_number,
+      choices:(q.choices||[]).map(c=>({...c,key:c.key||c.choice_key})),
+      stimuli:(groupMap.get(q.stimulus_group_id)?.stimuli||[]).map(s=>({...s,type:s.media_type}))
+    }));
+  if(!questions.length) return view.innerHTML=`<div class="card"><a href="#/test/${testId}">← Quay lại</a><h2>${esc(t.title||"Bài kiểm tra")}</h2><p>Chưa có câu hỏi để làm thử.</p></div>`;
+  const previewId=`preview-${testId}`;
+  const ui=readJSON(attemptUiKey(previewId),{current:0});
+  examState={
+    attemptId:previewId,
+    preview:true,
+    testId,
+    payload:{
+      test:t,
+      questions,
+      attempt:{
+        expires_at:new Date(Date.now()+(Number(t.duration_minutes)||75)*60000).toISOString(),
+        anti_cheat_mode:"off",
+        violation_count:0,
+        allowed_violations:0
+      }
+    },
+    current:Math.min(ui.current||0,questions.length-1),
+    saveStatus:"Làm thử · không lưu kết quả"
+  };
+  await hydrateMedia(questions);
+  drawExam();
+}
 function mergeQueuedAnswers(attemptId,questions){
   const queue=readJSON(attemptQueueKey(attemptId),[]);
   for(const ev of queue){
@@ -1639,9 +1683,9 @@ function drawExam(){
   const {payload,current}=examState;
   const q=payload.questions[current], a=payload.attempt;
   if(!q) return view.innerHTML=`<div class="card">Không có câu hỏi.</div>`;
-  const antiText=a.anti_cheat_mode==="off"?"Chống gian lận: Tắt":a.anti_cheat_mode==="strict"?`Vi phạm: ${a.violation_count||0} · chế độ nghiêm ngặt`:`Vi phạm: ${a.violation_count||0}/${a.allowed_violations??1} mức cảnh báo`;
+  const antiText=examState.preview?"Chế độ giảng viên làm thử · không tạo lượt làm":a.anti_cheat_mode==="off"?"Chống gian lận: Tắt":a.anti_cheat_mode==="strict"?`Vi phạm: ${a.violation_count||0} · chế độ nghiêm ngặt`:`Vi phạm: ${a.violation_count||0}/${a.allowed_violations??1} mức cảnh báo`;
   saveAttemptUi();
-  view.innerHTML=`<section class="exam-layout"><div class="exam-main">
+  view.innerHTML=`${examState.preview?`<section class="card preview-banner"><div class="row between wrap"><div><b>Chế độ làm thử</b><div class="muted">Giao diện như sinh viên · đáp án và kết quả không được ghi vào hệ thống</div></div><a class="btn secondary" href="#/test/${examState.testId}">← Thoát làm thử</a></div></section>`:""}<section class="exam-layout"><div class="exam-main">
     <div class="card"><div class="row between wrap"><div><b>Part ${q.part}</b><div class="muted">Câu ${q.number} · ${current+1}/${payload.questions.length}</div></div><div class="exam-status"><span id="saveStatus" class="save-status">${esc(examState.saveStatus||"Đã lưu")}</span><div id="timer" class="timer"></div></div></div></div>
     ${(q.stimuli||[]).map(s=>`<div class="stimulus">${renderMedia(s.type,s.url,s.content)}</div>`).join("")}
     <div class="card question">
@@ -1659,7 +1703,7 @@ function drawExam(){
   </div>
   <aside class="exam-side"><div class="card sticky"><div class="row between"><b>Câu hỏi</b><span class="muted">${payload.questions.filter(x=>x.selected).length}/${payload.questions.length}</span></div>
   <div class="palette">${payload.questions.map((x,i)=>`<button class="qbtn ${x.selected?"done":""} ${x.marked?"review":""} ${i===current?"current":""}" data-i="${i}">${x.number}</button>`).join("")}</div>
-  <button class="danger full" id="submitBtn">Nộp bài</button><p class="muted small">${esc(antiText)}</p></div></aside></section>`;
+  <button class="${examState.preview?"primary":"danger"} full" id="submitBtn">${examState.preview?"Kết thúc làm thử":"Nộp bài"}</button><p class="muted small">${esc(antiText)}</p></div></aside></section>`;
 
   document.querySelectorAll(".qbtn").forEach(b=>b.onclick=()=>{examState.current=+b.dataset.i;drawExam()});
   document.querySelector("#prevBtn").onclick=()=>{examState.current--;drawExam()};
@@ -1667,6 +1711,7 @@ function drawExam(){
   document.querySelectorAll('input[name="choice"]').forEach(r=>r.onchange=()=>saveCurrent(r.value));
   document.querySelector("#markReview").onchange=e=>saveCurrent(q.selected,e.target.checked);
   document.querySelector("#submitBtn").onclick=confirmSubmit;
+  clearInterval(timerId);
   updateTimer(); timerId=setInterval(updateTimer,1000);
 }
 function enqueueAnswer(attemptId,event){
@@ -1680,6 +1725,11 @@ async function saveCurrent(choice,marked=document.querySelector("#markReview")?.
   q.marked=marked;
   if(!choice){ setSaveStatus("Đã lưu tạm đánh dấu","local"); return; }
   q.selected=choice;
+  if(examState.preview){
+    setSaveStatus("Đã chọn tạm · không ghi dữ liệu","saved");
+    drawPaletteOnly();
+    return;
+  }
   const ev={client_event_id:crypto.randomUUID(),question_id:q.id,choice,marked,created_at:Date.now()};
   enqueueAnswer(examState.attemptId,ev);
   setSaveStatus(navigator.onLine?"Đang lưu…":"Mất mạng – đã lưu tạm",navigator.onLine?"pending":"offline");
@@ -1721,9 +1771,22 @@ function updateTimer(){
   const s=Math.floor(left/1000),h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;
   el.textContent=`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(ss).padStart(2,"0")}`;
   el.classList.toggle("danger-text",s<300);
-  if(left<=0){ clearInterval(timerId); go(`/result/${examState.attemptId}`); }
+  if(left<=0){
+    clearInterval(timerId);
+    if(examState.preview) renderPreviewResult();
+    else go(`/result/${examState.attemptId}`);
+  }
 }
 function confirmSubmit(){
+  if(examState?.preview){
+    modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal">
+      <h2>Kết thúc làm thử?</h2><p>Thầy đã trả lời <b>${examState.payload.questions.filter(x=>x.selected).length}/${examState.payload.questions.length}</b> câu. Kết quả này không được lưu.</p>
+      <div class="row between"><button class="secondary" data-close>Tiếp tục làm</button><button class="primary" id="finishPreview">Xem kết quả thử</button></div>
+    </div></div>`;
+    modalRoot.querySelector("[data-close]").onclick=closeModal;
+    modalRoot.querySelector("#finishPreview").onclick=()=>{closeModal();renderPreviewResult()};
+    return;
+  }
   modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal">
     <h2>Nộp bài?</h2><p>Bạn đã trả lời <b>${examState.payload.questions.filter(x=>x.selected).length}/${examState.payload.questions.length}</b> câu.</p>
     <div class="row between"><button class="secondary" data-close>Tiếp tục làm</button><button class="danger" id="doSubmit">Nộp bài</button></div>
@@ -1741,6 +1804,22 @@ function confirmSubmit(){
     localStorage.removeItem(attemptUiKey(examState.attemptId));
     closeModal(); go(`/result/${examState.attemptId}`);
   };
+}
+function renderPreviewResult(){
+  if(!examState?.preview) return;
+  clearInterval(timerId); timerId=null;
+  const {questions}=examState.payload, testId=examState.testId;
+  const correct=questions.filter(q=>q.selected && q.selected===q.correct_choice_key).length;
+  const answered=questions.filter(q=>q.selected).length;
+  localStorage.removeItem(attemptUiKey(examState.attemptId));
+  view.innerHTML=`<section class="card">
+    <span class="eyebrow">Kết quả làm thử</span><h1>${correct}/${questions.length} câu đúng</h1>
+    <p class="muted">Đã trả lời ${answered}/${questions.length} câu. Kết quả không được ghi vào bài làm sinh viên.</p>
+    <div class="row wrap"><button class="primary" id="retryPreview">Làm thử lại</button><a class="btn secondary" href="#/test/${testId}">← Về bài kiểm tra</a></div>
+  </section>
+  <section class="card result-list"><h2>Đối chiếu đáp án</h2>${questions.map(q=>`<div class="result-row"><b>Câu ${q.number}</b> · Đã chọn: <b>${esc(q.selected||"—")}</b> · Đáp án: <b>${esc(q.correct_choice_key||"—")}</b> · <span class="${q.selected===q.correct_choice_key?"correct":"wrong"}">${q.selected===q.correct_choice_key?"Đúng":"Sai"}</span></div>`).join("")}</section>`;
+  examState=null;
+  document.querySelector("#retryPreview")?.addEventListener("click",()=>renderStaffPreview(testId));
 }
 function bindAntiCheat(){
   if(antiCheatBound) return;
