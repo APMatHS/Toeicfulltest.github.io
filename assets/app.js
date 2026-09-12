@@ -58,6 +58,11 @@ function saveActiveStaffScroll(){
   entry.scroll=window.scrollY;
   writeJSON(staffCacheScrollKey(activeStaffPageKey),{scroll:entry.scroll,updated_at:Date.now()});
 }
+function clearTransientView(){
+  [...appView.children].forEach(el=>{
+    if(!el.classList.contains("staff-page-cache")) el.remove();
+  });
+}
 function deactivateStaffPages(){
   saveActiveStaffScroll();
   staffPageCache.forEach(x=>x.el.hidden=true);
@@ -99,6 +104,10 @@ async function prefetchStaffData(force=false){
 }
 async function showStaffPage(key,initFn,afterShow=null){
   saveActiveStaffScroll();
+  // Preview/exam/result screens render directly in #view. Remove that transient
+  // markup before restoring a cached staff page, otherwise both screens remain
+  // mounted and visually overlap after browser Back or "Thoát làm thử".
+  clearTransientView();
   let entry=staffPageCache.get(key);
   if(!entry){
     const el=document.createElement("section");
@@ -211,6 +220,10 @@ function renderHeader(){
 async function render(){
   clearInterval(timerId); timerId=null;
   const p=route();
+  if(!p.startsWith("/preview/") && examState?.preview){
+    examState=null;
+    closeModal();
+  }
   const targetTestId = p.startsWith("/test/") ? p.split("/")[2] : null;
   if(targetTestId && testWorkspace && testWorkspace.id!==targetTestId){
     clearLiveChannel();
