@@ -1,66 +1,32 @@
-# TOEIC Full Test — V1.6
+# TOEIC Full Test
 
-Bản V1.6 gồm:
+Ứng dụng thi TOEIC dùng Supabase cho tài khoản, đề thi, lượt làm, đáp án và media.
 
-- đưa **Tổng quan / Tài khoản / Lớp / Bài kiểm tra** lên thanh Nav trên cùng để phần nội dung cao hơn;
-- thêm trang `#/class/<id>` để xem/sửa lớp và quản lý sinh viên;
-- thêm/bớt sinh viên khỏi lớp **không xóa tài khoản**;
-- trang Tài khoản thêm cột **Lớp**;
-- sửa lỗi **Tạo bài thủ công** của V1.5;
-- chuẩn hóa luồng nhân bản bài kiểm tra;
-- ghi cache-busting `?v=1.6`.
+## Cấu trúc JavaScript
 
-## Lỗi tạo bài thủ công đã sửa
+- `assets/app.js`: điều phối màn hình, route và luồng nghiệp vụ.
+- `assets/modules/utils.js`: hàm dùng chung và trạng thái trình duyệt.
+- `assets/modules/media.js`: tải media và tạo URL tạm từ Supabase Storage.
+- `assets/modules/rich-editor.js`: trình soạn thảo, làm sạch HTML và ảnh nhúng.
+- `assets/modules/authoring-view.js`: giao diện danh sách và tìm kiếm khi soạn đề.
+- `assets/config.js`: cấu hình kết nối Supabase phía trình duyệt.
 
-V1.5 có nút `Tạo bài nháp` không khai báo `type="submit"` nhưng JS lại tìm
-`button[type='submit']`. Vì vậy `querySelector(...)` trả về `null` và lỗi xảy ra
-trước khi gọi `staff_upsert_test`.
+## Soạn nội dung
 
-V1.6:
+Giảng viên có thể dùng chữ đậm, nghiêng, gạch chân, danh sách, liên kết, bảng và
+ảnh đặt trong nội dung. Ảnh được tải vào bucket private `test-media`; dữ liệu chỉ
+lưu đường dẫn Storage, còn URL tạm được tạo khi mở đề.
 
-- thêm `type="submit"`;
-- dùng `e.submitter` và fallback;
-- `duration_minutes`, `max_attempts` chuyển sang Number;
-- `class_id` rỗng → `null`;
-- thời gian rỗng → `null`;
-- chấp nhận backend trả ID dạng chuỗi, `{id}` hoặc `{test_id}`;
-- tạo xong tự tạo Part 5, 6, 7 và mở thẳng tab **Soạn đề**.
+Nội dung cũ dạng văn bản thuần vẫn được hỗ trợ. HTML được giới hạn bằng danh sách
+thẻ an toàn trước khi lưu và trước khi hiển thị.
 
-## Quản lý lớp
+## Trộn câu
 
-Trang chi tiết lớp có:
+- Part 5: trộn từng câu.
+- Part 6: trộn theo nguyên nhóm bài đọc.
+- Part 7: giữ cố định.
 
-- tên lớp, học kỳ, năm học, ngày tạo;
-- số sinh viên và số bài kiểm tra;
-- Chỉnh sửa lớp;
-- Thêm sinh viên;
-- tìm theo họ tên / MSSV / email;
-- Bỏ khỏi lớp.
+## Chạy web
 
-**Bỏ khỏi lớp chỉ đặt `class_id = null`, không xóa tài khoản.**
-
-Nếu thêm sinh viên đang thuộc lớp khác, sinh viên sẽ được chuyển sang lớp mới.
-
-## SQL cần chạy
-
-Chạy:
-
-`supabase/v1.6_class_management.sql`
-
-trong Supabase SQL Editor trước khi dùng chức năng thêm/bớt sinh viên khỏi lớp.
-
-## Cách dùng ZIP
-
-Đây là bộ cập nhật từ code V1.5 hiện tại trên GitHub.
-
-1. Giải nén toàn bộ vào root repo `Toeicfulltest.github.io`.
-2. Windows: chạy `apply_v1.6.bat`.
-3. Hoặc chạy `python apply_v1_6.py`.
-4. Chạy file SQL trong thư mục `supabase`.
-5. Kiểm tra web rồi commit/push.
-
-Script tự backup:
-
-- `index.html.bak-v1.5`
-- `assets/app.js.bak-v1.5`
-- `assets/styles.css.bak-v1.5`
+Đây là web tĩnh dùng ES modules, cần mở qua HTTP hoặc GitHub Pages; không mở trực
+tiếp `index.html` bằng giao thức `file://`.

@@ -2,8 +2,16 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 import * as XLSX from "https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs";
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js";
+import { esc,fmt,route,go,roleLabel,statusBadge,readJSON,writeJSON,debounce } from "./modules/utils.js";
+import { createMediaService } from "./modules/media.js";
+import { bindAuthoringFilter,renderAuthoringMarkup } from "./modules/authoring-view.js";
+import {
+  bindRichEditors,embeddedImagePaths,hydrateEmbeddedImages,
+  renderRichText,richEditorField,sanitizeRichHtml
+} from "./modules/rich-editor.js";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+const {uploadMedia,signedUrl,signedUrlMap}=createMediaService(sb);
 const appView = document.querySelector("#view");
 let view = appView;
 const sessionActions = document.querySelector("#sessionActions");
@@ -28,15 +36,6 @@ let activeStaffPageKey = null;
 const staffDataCache={users:null,classes:null,tests:null,updatedAt:0};
 let staffPrefetchPromise=null;
 
-const esc = (s="") => String(s).replace(/[&<>"']/g, m => ({
-  "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
-}[m]));
-const fmt = dt => dt ? new Date(dt).toLocaleString("vi-VN") : "—";
-const route = () => location.hash.slice(1) || "/";
-const go = p => location.hash = p;
-const roleLabel = r => ({system_admin:"System Admin",teacher:"Giáo viên",student:"Sinh viên"})[r] || r;
-const statusBadge = s => `<span class="status ${["published","submitted"].includes(s)?"ok":s==="in_progress"?"warn":"off"}">${esc(s)}</span>`;
-
 function toast(msg, ms=3600){
   toastEl.textContent = msg;
   toastEl.hidden = false;
@@ -51,8 +50,6 @@ function uiStateKey(testId){ return `toeic.ui.${session?.user?.id||"anon"}.${tes
 function authorDraftKey(testId){ return `toeic.authorDraft.${session?.user?.id||"anon"}.${testId}`; }
 function attemptQueueKey(attemptId){ return `toeic.answerQueue.${attemptId}`; }
 function attemptUiKey(attemptId){ return `toeic.attemptUi.${attemptId}`; }
-function readJSON(key,fallback=null){ try{return JSON.parse(localStorage.getItem(key)) ?? fallback}catch{return fallback} }
-function writeJSON(key,val){ localStorage.setItem(key,JSON.stringify(val)); }
 function staffCacheScrollKey(key){ return `toeic.staffView.${session?.user?.id||"anon"}.${key}`; }
 function saveActiveStaffScroll(){
   if(!activeStaffPageKey) return;
@@ -148,31 +145,6 @@ async function getAuthorDraft(testId){
 async function clearAuthorDraft(testId){
   localStorage.removeItem(authorDraftKey(testId));
   await sb.from("authoring_drafts").delete().eq("user_id",session.user.id).eq("test_id",testId);
-}
-function debounce(fn,ms=350){ let t; return (...args)=>{clearTimeout(t);t=setTimeout(()=>fn(...args),ms)}; }
-function fileExt(name=""){ return name.includes(".") ? "."+name.split(".").pop().toLowerCase() : ""; }
-function mediaTypeFromFile(file){
-  if(!file) return null;
-  if(file.type.startsWith("image/")) return "image";
-  if(file.type.startsWith("audio/")) return "audio";
-  return null;
-}
-async function uploadMedia(file, prefix="media"){
-  if(!file) return null;
-  const kind = mediaTypeFromFile(file);
-  if(!kind) throw new Error("Chỉ hỗ trợ ảnh hoặc âm thanh.");
-  const path = `${prefix}/${crypto.randomUUID()}${fileExt(file.name)}`;
-  const { error } = await sb.storage.from("test-media").upload(path, file, {
-    cacheControl:"3600", upsert:false, contentType:file.type
-  });
-  if(error) throw error;
-  return { media_type:kind, storage_path:path };
-}
-async function signedUrl(path){
-  if(!path) return null;
-  const {data,error}=await sb.storage.from("test-media").createSignedUrl(path,3600);
-  if(error) return null;
-  return data?.signedUrl || null;
 }
 
 async function boot(){
@@ -915,6 +887,7 @@ async function renderTestDetail(id,tab="overview"){
   const {data,error}=await sb.rpc("get_test_authoring",{p_test_id:id});
   if(error){ view.innerHTML=`${staffNav("tests")}<div class="card">${esc(error.message)}</div>`; return; }
   const t=data.test, parts=data.parts||[], qs=data.questions||[], groups=data.stimulus_groups||[];
+  await hydrateAuthoringRichContent(qs,groups);
   const draft=await getAuthorDraft(id);
   const savedUi=readJSON(uiStateKey(id),{});
   const scrolls=savedUi.scrolls||{authoring:savedUi.scrollY||0};
@@ -980,6 +953,21 @@ async function renderTestDetail(id,tab="overview"){
     testWorkspace.scrolls[testWorkspace.activeTab]=window.scrollY;
   },{passive:true});
   await activateTestTab(id,tab,{push:false,restore:true});
+}
+
+async function hydrateAuthoringRichContent(questions,groups){
+  const values=[
+    ...questions.flatMap(q=>[q.content,...(q.choices||[]).map(c=>c.content)]),
+    ...groups.flatMap(g=>(g.stimuli||[]).map(s=>s.content))
+  ];
+  const paths=values.flatMap(embeddedImagePaths);
+  if(!paths.length) return;
+  const urls=await signedUrlMap(paths);
+  for(const q of questions){
+    q.content=hydrateEmbeddedImages(q.content,urls);
+    for(const c of q.choices||[]) c.content=hydrateEmbeddedImages(c.content,urls);
+  }
+  for(const g of groups) for(const s of g.stimuli||[]) s.content=hydrateEmbeddedImages(s.content,urls);
 }
 function bindTestHeaderActions(id,t,staticCount=0){
   document.querySelector("#publishBtn")?.addEventListener("click",async()=>{
@@ -1112,58 +1100,6 @@ async function migrateStaticMedia(testId,groups){
   }catch(err){toast(`Dừng ở ${done}/${items.length}: ${err.message}`,8000);if(btn){btn.disabled=false;btn.textContent="Thử chuyển lại";}}
 }
 
-function renderAuthoringMarkup(id,parts,qs,groups,draft,locked=false){
-  return `<section class="card authoring">
-    <div class="row between wrap">
-      <div><h2>Soạn đề</h2><p class="muted">Nháp tự lưu. Ảnh có thể chọn file hoặc click vùng paste rồi Ctrl+V từ PDF/Snipping Tool.</p></div>
-      <div class="row wrap"><span id="draftStatus" class="muted">${locked?"Đề đã khóa":draft?"Có bản nháp":"Đã đồng bộ"}</span>${(!locked&&draft)?`<button class="secondary sm" id="restoreDraft">Khôi phục nháp</button><button class="ghost sm" id="discardDraft">Bỏ nháp</button>`:""}</div>
-    </div>
-    ${locked?`<div class="lock-banner"><b>🔒 Không thể sửa nội dung</b><span>Đề đã khóa từ khi sinh viên đầu tiên bắt đầu. Hãy dùng “Tạo từ bài kiểm tra cũ” để tạo phiên bản mới.</span></div>`:""}
-    <div class="authoring-tools">
-      <label class="author-search">Tìm trong đề<input id="authorSearch" type="search" placeholder="Số câu, nội dung, tên nhóm…"></label>
-      <div class="row wrap"><button type="button" class="secondary sm" id="expandAuthoring">Mở tất cả</button><button type="button" class="ghost sm" id="collapseAuthoring">Thu gọn tất cả</button></div>
-    </div>
-    <div id="authorNoResults" class="empty" hidden>Không tìm thấy nội dung phù hợp.</div>
-    ${parts.map(p=>{
-      const pGroups=groups.filter(g=>g.part_no===p.part_no);
-      const pQs=qs.filter(q=>q.part_no===p.part_no);
-      return `<details class="part-editor author-part" data-search="part ${p.part_no} ${esc(p.title||"").toLowerCase()}" open>
-        <summary><div class="row between wrap"><div><h3>${esc(p.title)}</h3><span class="muted">${pQs.length} câu · ${pGroups.length} nhóm nội dung</span></div>
-          <div class="row wrap">${locked?"":`<button class="secondary sm add-group" data-part="${p.id}" data-partno="${p.part_no}">+ Nhóm nội dung</button><button class="primary sm add-question" data-part="${p.id}" data-partno="${p.part_no}">+ Câu hỏi</button>`}</div>
-        </div></summary>
-        <div class="part-editor-body">
-        ${pGroups.map(g=>`<details class="group-box author-group" data-id="${g.id}" data-search="${esc(`${g.title||""} ${g.source_order} ${(g.stimuli||[]).map(s=>s.content||"").join(" ")}`.toLowerCase())}" open>
-          <summary><div class="row between wrap"><div><b>${esc(g.title||`Nhóm ${g.source_order}`)}</b><div class="muted">Thứ tự ${g.source_order} · ${esc(g.play_mode||"normal")}</div></div>
-          ${locked?"":`<div class="row wrap"><button class="ghost sm add-stimulus" data-group="${g.id}">+ Nội dung chung</button><button class="ghost sm edit-group" data-id="${g.id}">Sửa nhóm</button><button class="danger sm delete-group" data-id="${g.id}">Xóa nhóm</button></div>`}</div></summary>
-          <div class="group-body"><div class="media-list">${(g.stimuli||[]).map(s=>`<span class="stimulus-chip"><span class="badge">${s.media_type==="image"?"🖼 Ảnh":s.media_type==="audio"?"🔊 Audio":"📝 Text"}</span>${locked?"":`<button class="ghost xs edit-stimulus" data-group="${g.id}" data-id="${s.id}">Sửa</button><button class="danger xs delete-stimulus" data-id="${s.id}">Xóa</button>`}</span>`).join("") || '<span class="muted">Chưa có nội dung chung</span>'}</div>
-          ${pQs.filter(q=>q.stimulus_group_id===g.id).map(q=>questionAuthorRow(q,locked)).join("") || '<div class="muted mini-empty">Chưa có câu trong nhóm</div>'}
-          </div></details>`).join("")}
-        <div class="ungrouped">${pQs.filter(q=>!q.stimulus_group_id).map(q=>questionAuthorRow(q,locked)).join("")}</div>
-        </div></details>`;
-    }).join("")}
-  </section>`;
-}
-function bindAuthoringFilter(){
-  const input=document.querySelector("#authorSearch"),parts=[...document.querySelectorAll(".author-part")];
-  if(!input) return;
-  const apply=()=>{
-    const q=input.value.trim().toLowerCase(); let visible=0;
-    parts.forEach(part=>{
-      let partHits=0;
-      part.querySelectorAll(".author-question").forEach(row=>{const ok=!q||row.dataset.search.includes(q);row.hidden=!ok;if(ok){partHits++;visible++;}});
-      part.querySelectorAll(".author-group").forEach(group=>{
-        const rows=[...group.querySelectorAll(".author-question")],own=group.dataset.search.includes(q),ok=!q||own||rows.some(x=>!x.hidden);
-        group.hidden=!ok;if(q&&ok)group.open=true;
-      });
-      const ok=!q||partHits>0||part.dataset.search.includes(q)||[...part.querySelectorAll(".author-group")].some(x=>!x.hidden);
-      part.hidden=!ok;if(q&&ok)part.open=true;
-    });
-    document.querySelector("#authorNoResults").hidden=!q||parts.some(x=>!x.hidden);
-  };
-  input.addEventListener("input",apply);
-  document.querySelector("#expandAuthoring").onclick=()=>document.querySelectorAll(".author-part,.author-group").forEach(x=>x.open=true);
-  document.querySelector("#collapseAuthoring").onclick=()=>document.querySelectorAll(".author-part,.author-group").forEach(x=>x.open=false);
-}
 function bindAuthoringActions(id,parts,qs,groups,draft,locked=false){
   bindAuthoringFilter();
   if(locked) return;
@@ -1315,15 +1251,6 @@ async function exportTestExcel(testId){
   toast("Đã tạo file Excel");
 }
 
-function questionAuthorRow(q,locked=false){
-  const media = q.storage_path ? (q.media_type==="audio"?" 🔊":" 🖼") : "";
-  const search=esc(`${q.source_number} ${q.content||""} ${(q.choices||[]).map(c=>c.content||"").join(" ")}`.toLowerCase());
-  return `<div class="question-author-row author-question" data-search="${search}">
-    <div><b>Câu ${q.source_number}</b>${media} · ${esc(q.content||"(không có chữ)")}<div class="muted small">Đáp án đúng: ${esc(q.correct_choice_key||"—")}</div></div>
-    ${locked?"":`<div class="row wrap question-actions"><button class="secondary sm edit-question" data-id="${q.id}">Sửa</button><button class="ghost sm duplicate-question" data-id="${q.id}">Nhân bản</button><button class="danger sm delete-question" data-id="${q.id}" data-number="${q.source_number}">Xóa</button></div>`}
-  </div>`;
-}
-
 async function confirmDeleteAuthorItem(kind,testId,itemId,label){
   const meta={question:["câu hỏi","staff_delete_question"],group:["nhóm nội dung","staff_delete_stimulus_group"],stimulus:["nội dung chung","staff_delete_stimulus"]}[kind];
   if(!meta) return;
@@ -1442,11 +1369,12 @@ function openGroupEditor(testId, partId, partNo, draft=null, existing=null, allG
 }
 function openStimulusEditor(testId, groupId, draft=null, existing=null, groupStimuli=[]){
   const nextOrder=Math.max(0,...groupStimuli.map(s=>Number(s.sort_order)||0))+1;
+  const textValue=draft?.fields?.content??existing?.content??"";
   modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal">
     <div class="row between"><div><h2>${existing?"Sửa":"Thêm"} nội dung chung</h2><p class="muted">Text, ảnh hoặc audio này dùng chung cho các câu thuộc nhóm.</p></div><button class="ghost sm" data-close>Đóng</button></div>
     <form id="stimForm" class="stack">
       <label>Loại<select name="kind" id="stimKind"><option value="text" ${!existing||existing.media_type==="text"?"selected":""}>Văn bản</option><option value="file" ${existing&&existing.media_type!=="text"?"selected":""}>Ảnh / Audio</option></select></label>
-      <label id="stimTextWrap">Nội dung<textarea name="content" rows="6">${esc(existing?.content||"")}</textarea></label>
+      <div id="stimTextWrap">${richEditorField("content","Nội dung",textValue)}</div>
       <div id="stimFileWrap" hidden>${mediaPasteField("stimulus_media","Ảnh / Audio",existing?.storage_path,existing?.media_type)}</div>
       <label>Thứ tự<input type="number" name="sort_order" value="${existing?.sort_order??nextOrder}" min="1"></label>
       <button class="primary">${existing?"Lưu thay đổi":"Lưu nội dung"}</button>
@@ -1464,12 +1392,20 @@ function openStimulusEditor(testId, groupId, draft=null, existing=null, groupSti
   if(draft?.fields?.stimulus_media_path||existing?.storage_path) showMediaPreview(form,"stimulus_media",draft?.fields?.stimulus_media_path||existing.storage_path,draft?.fields?.stimulus_media_type||existing.media_type);
   bindPasteMedia(form,testId,"groups",{kind:"stimulus",groupId,existingId:existing?.id||null});
   bindDraftAutosave(form,testId,{kind:"stimulus",groupId,existingId:existing?.id||null});
+  bindRichEditors(form,{
+    uploadImage:async file=>{
+      const up=await uploadMedia(file,`tests/${testId}/rich`);
+      return {...up,url:await signedUrl(up.storage_path)};
+    },
+    onChange:()=>form.dispatchEvent(new Event("input",{bubbles:true})),
+    onError:err=>toast(err.message,6000)
+  });
   form.onsubmit=async e=>{
     e.preventDefault();
     const fd=new FormData(e.target);
     const payload={id:existing?.id||undefined,stimulus_group_id:groupId,sort_order:+fd.get("sort_order")||1};
     if(fd.get("kind")==="text"){
-      payload.media_type="text"; payload.content=fd.get("content")||""; payload.storage_path=null;
+      payload.media_type="text"; payload.content=sanitizeRichHtml(String(fd.get("content")||""),{storage:true}); payload.storage_path=null;
     }else{
       const path=fd.get("stimulus_media_path"),type=fd.get("stimulus_media_type");
       if(!path||!type) return toast("Chưa chọn hoặc paste media.");
@@ -1488,6 +1424,7 @@ function openQuestionEditor(testId, partId, partNo, allGroups, existing=null, dr
   const nextNumber=Math.max(defaultStart-1,...allQuestions.filter(q=>q.part_no===partNo).map(q=>Number(q.source_number)||0))+1;
   const sourceNumber=duplicate?nextNumber:(existing?.source_number??nextNumber);
   const sourceOrder=duplicate?nextNumber:(existing?.source_order??sourceNumber);
+  const draftFields=draft?.fields||{};
   modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal wide">
     <div class="row between"><div><h2>${duplicate?"Nhân bản":existing?"Sửa":"Thêm"} câu hỏi · Part ${partNo}</h2><p class="muted">Số câu và thứ tự được tự động điền; vẫn có thể sửa thủ công.</p></div><button class="ghost sm" data-close>Đóng</button></div>
     <form id="questionForm" class="stack">
@@ -1495,14 +1432,14 @@ function openQuestionEditor(testId, partId, partNo, allGroups, existing=null, dr
         <label>Số câu nguồn<input type="number" name="source_number" value="${sourceNumber}" required></label>
         <label>Thứ tự<input type="number" name="source_order" value="${sourceOrder}" required></label>
         <label class="span-2">Nhóm nội dung<select name="stimulus_group_id"><option value="">Không dùng nhóm</option>${groups.map(g=>`<option value="${g.id}" ${existing?.stimulus_group_id===g.id?"selected":""}>${esc(g.title||`Nhóm ${g.source_order}`)}</option>`).join("")}</select></label>
-        <label class="span-2">Nội dung câu hỏi<textarea name="content" rows="3">${esc(existing?.content||"")}</textarea></label>
+        <div class="span-2">${richEditorField("content","Nội dung câu hỏi",draftFields.content??existing?.content??"")}</div>
         <div class="span-2">${mediaPasteField("question_media","Media riêng của câu hỏi",existing?.storage_path,existing?.media_type)}</div>
       </div>
       <div class="row between wrap"><h3>Đáp án</h3><span class="muted small">Mỗi đáp án có thể là chữ, ảnh hoặc cả hai.</span></div>
       <div class="choices-editor">
         ${["A","B","C","D"].map(k=>`<div class="choice-edit-v2">
           <div class="choice-key">${k}</div>
-          <input name="choice_${k}" value="${esc(choices[k]?.content||"")}" placeholder="Nội dung đáp án ${k}">
+          ${richEditorField(`choice_${k}`,`Nội dung đáp án ${k}`,draftFields[`choice_${k}`]??choices[k]?.content??"",{compact:true})}
           <div>${mediaPasteField(`choice_${k}_media`,`Media đáp án ${k}`,choices[k]?.storage_path,choices[k]?.media_type)}</div>
         </div>`).join("")}
       </div>
@@ -1524,6 +1461,14 @@ function openQuestionEditor(testId, partId, partNo, allGroups, existing=null, dr
   const extra={kind:"question",partId,partNo,existingId:duplicate?null:(existing?.id||null)};
   bindPasteMedia(form,testId,"authoring",extra);
   bindDraftAutosave(form,testId,extra);
+  bindRichEditors(form,{
+    uploadImage:async file=>{
+      const up=await uploadMedia(file,`tests/${testId}/rich`);
+      return {...up,url:await signedUrl(up.storage_path)};
+    },
+    onChange:()=>form.dispatchEvent(new Event("input",{bubbles:true})),
+    onError:err=>toast(err.message,6000)
+  });
   form.onsubmit=async e=>{
     e.preventDefault();
     const fd=new FormData(e.target);
@@ -1531,7 +1476,7 @@ function openQuestionEditor(testId, partId, partNo, allGroups, existing=null, dr
     try{
       const choiceRows=["A","B","C","D"].map(k=>({
         key:k,
-        content:String(fd.get(`choice_${k}`)||""),
+        content:sanitizeRichHtml(String(fd.get(`choice_${k}`)||""),{storage:true}),
         media_type:fd.get(`choice_${k}_media_type`)||null,
         storage_path:fd.get(`choice_${k}_media_path`)||null
       }));
@@ -1539,7 +1484,7 @@ function openQuestionEditor(testId, partId, partNo, allGroups, existing=null, dr
         id:duplicate?undefined:(existing?.id||undefined), test_part_id:partId,
         source_number:+fd.get("source_number"), source_order:+fd.get("source_order"),
         stimulus_group_id:fd.get("stimulus_group_id")||null,
-        content:String(fd.get("content")||""),
+        content:sanitizeRichHtml(String(fd.get("content")||""),{storage:true}),
         media_type:fd.get("question_media_type")||null,
         storage_path:fd.get("question_media_path")||null,
         correct_choice_key:fd.get("correct_choice_key"), score_weight:1, choices:choiceRows
@@ -1687,25 +1632,27 @@ async function hydrateMedia(questions){
   const staticUrl=p=>p?.startsWith("static:") ? p.slice(7) : null;
   for(const q of questions){
     if(q.storage_path && !staticUrl(q.storage_path)) paths.add(q.storage_path);
+    embeddedImagePaths(q.content).forEach(p=>paths.add(p));
     for(const s of q.stimuli||[]) if(s.storage_path && !staticUrl(s.storage_path)) paths.add(s.storage_path);
-    for(const c of q.choices||[]) if(c.storage_path && !staticUrl(c.storage_path)) paths.add(c.storage_path);
+    for(const s of q.stimuli||[]) embeddedImagePaths(s.content).forEach(p=>paths.add(p));
+    for(const c of q.choices||[]){
+      if(c.storage_path && !staticUrl(c.storage_path)) paths.add(c.storage_path);
+      embeddedImagePaths(c.content).forEach(p=>paths.add(p));
+    }
   }
-  const m={};
-  if(paths.size){
-    const {data}=await sb.storage.from("test-media").createSignedUrls([...paths],3600);
-    (data||[]).forEach(x=>m[x.path]=x.signedUrl);
-  }
+  const m=await signedUrlMap([...paths]);
   const resolve=p=>staticUrl(p)||m[p];
   for(const q of questions){
     if(q.storage_path) q.url=resolve(q.storage_path);
-    for(const s of q.stimuli||[]) if(s.storage_path) s.url=resolve(s.storage_path);
-    for(const c of q.choices||[]) if(c.storage_path) c.url=resolve(c.storage_path);
+    q.content=hydrateEmbeddedImages(q.content,m);
+    for(const s of q.stimuli||[]){if(s.storage_path)s.url=resolve(s.storage_path);s.content=hydrateEmbeddedImages(s.content,m);}
+    for(const c of q.choices||[]){if(c.storage_path)c.url=resolve(c.storage_path);c.content=hydrateEmbeddedImages(c.content,m);}
   }
 }
 function renderMedia(type,url,content,cls=""){
   if(type==="image" && url) return `<img class="question-media ${cls}" src="${url}" alt="Nội dung câu hỏi">`;
   if(type==="audio" && url) return `<audio class="${cls}" controls src="${url}"></audio>`;
-  if(type==="text" || content) return content?`<div class="${cls}">${esc(content).replace(/\n/g,"<br>")}</div>`:"";
+  if(type==="text" || content) return content?`<div class="rich-content ${cls}">${renderRichText(content)}</div>`:"";
   return "";
 }
 function saveAttemptUi(){
@@ -1728,11 +1675,11 @@ function drawExam(){
     ${(q.stimuli||[]).map(s=>`<div class="stimulus">${renderMedia(s.type,s.url,s.content)}</div>`).join("")}
     <div class="card question">
       ${renderMedia(q.media_type,q.url,null)}
-      <h3>${q.number}. ${esc(q.content||"")}</h3>
+      <div class="question-title"><b>${q.number}.</b><div class="rich-content">${renderRichText(q.content||"")}</div></div>
       ${(q.choices||[]).map(c=>`<label class="choice">
         <input type="radio" name="choice" value="${c.key}" ${q.selected===c.key?"checked":""}>
         <b>${c.key}.</b>
-        <span class="choice-body">${renderMedia(c.media_type,c.url,null,"choice-media")}${esc(c.content||"")}</span>
+        <div class="choice-body">${renderMedia(c.media_type,c.url,null,"choice-media")}<div class="rich-content">${renderRichText(c.content||"")}</div></div>
       </label>`).join("")}
       <div class="divider"></div>
       <label class="review-label"><input id="markReview" type="checkbox" ${q.marked?"checked":""}> Đánh dấu xem lại</label>
@@ -1827,7 +1774,7 @@ function updateTimer(){
 function confirmSubmit(){
   if(examState?.preview){
     modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal">
-      <h2>Kết thúc làm thử?</h2><p>Thầy đã trả lời <b>${examState.payload.questions.filter(x=>x.selected).length}/${examState.payload.questions.length}</b> câu. Kết quả này không được lưu.</p>
+      <h2>Kết thúc làm thử?</h2><p>Thầy đã trả lời <b>${examState.payload.questions.filter(x=>x.selected).length}/${examState.payload.questions.length}</b> câu. Kết quả sẽ được lưu vào lịch sử làm thử riêng.</p>
       <div class="row between"><button class="secondary" data-close>Tiếp tục làm</button><button class="primary" id="finishPreview">Xem kết quả thử</button></div>
     </div></div>`;
     modalRoot.querySelector("[data-close]").onclick=closeModal;
