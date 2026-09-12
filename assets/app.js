@@ -6,7 +6,8 @@ import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js";
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const appView = document.querySelector("#view");
 let view = appView;
-const sessionActions = document.querySelector("#sessionActions");\nconst staffHeaderNav = document.querySelector("#staffHeaderNav");
+const sessionActions = document.querySelector("#sessionActions");
+const staffHeaderNav = document.querySelector("#staffHeaderNav");
 const toastEl = document.querySelector("#toast");
 const modalRoot = document.querySelector("#modalRoot");
 
