@@ -1,51 +1,53 @@
-# TOEIC Full Test — V1.10
+# TOEIC Full Test — V1.11
 
-Ứng dụng thi TOEIC dùng Supabase cho tài khoản, đề thi, lượt làm, đáp án và media.
+Ứng dụng thi TOEIC dùng Supabase Auth/PostgreSQL/Storage và GitHub Pages.
 
-## Chống gian lận V1.10
+## V1.11 — quản lý mật khẩu theo vai trò
 
-- Mỗi lần sinh viên rời màn hình được tính **ngay 1 vi phạm**.
-- Lần 1 và 2: hiện cảnh báo che toàn trang và đếm ngược 15 giây.
-- Quay lại trước 15 giây: tiếp tục làm, nhưng vi phạm vẫn được giữ.
-- Rời quá 15 giây: tự động nộp bài.
-- Rời màn hình lần thứ 3: tự động nộp ngay, không chờ 15 giây.
-- Desktop: `window_blur` và `tab_hidden` được gộp thành một phiên để không tính trùng.
-- Mobile: chỉ `visibilitychange -> hidden` được dùng để tính vi phạm, tránh tính oan do mất focus.
-- Thoát fullscreen riêng lẻ không tự cộng thêm vi phạm.
-- Có cảnh báo toàn màn hình và âm báo khi trình duyệt cho phép.
+### Giảng viên / System Admin
 
-## Lưu đáp án
+- Có **Quên mật khẩu** ngay tại trang đăng nhập.
+- Nhập email → backend kiểm tra vai trò → Supabase gửi link recovery chỉ cho `teacher`/`system_admin` đang hoạt động.
+- Link recovery mở trang đặt mật khẩu mới trên chính web TOEIC.
+- Phản hồi công khai không tiết lộ email nào tồn tại trong hệ thống.
 
-- Khi chọn A/B/C/D, đáp án được ghi vào hàng đợi `localStorage` **trước khi** đồng bộ Supabase.
-- Nếu đổi tab, thoát fullscreen, mất mạng, refresh hoặc quay lại bài thi, đáp án chưa đồng bộ được phục hồi từ hàng đợi cục bộ.
-- Khi có mạng, hàng đợi tự đồng bộ qua `save_answer_v2`.
-- Trạng thái “Đánh dấu xem lại” cũng được lưu kể cả khi câu chưa chọn đáp án.
+### Sinh viên
 
-## Xem lại sau khi nộp
+- Không tự recovery bằng email; giao diện yêu cầu liên hệ giảng viên.
+- Giảng viên/System Admin có **Sinh lại mật khẩu** trong:
+  - `Tài khoản`;
+  - `Lớp → Thành viên lớp`.
+- Chỉ tài khoản `student` mới được reset bằng chức năng này.
+- Mật khẩu tạm dài 12 ký tự, chỉ hiển thị một lần và không ghi vào log.
+- Sinh viên buộc đổi mật khẩu tạm trước khi tiếp tục vào bài kiểm tra.
 
-- Sau khi nộp, sinh viên xem lại toàn bộ câu hỏi, passage, ảnh, bảng và phương án mình đã chọn ngay trên trang kết quả.
-- Nếu giảng viên bật **Cho xem đáp án**, trang kết quả hiển thị đáp án đúng và đúng/sai từng câu.
-- Nếu tắt, sinh viên vẫn xem được bài đã làm nhưng không nhận được đáp án đúng hoặc trạng thái đúng/sai từng câu.
-- Bài tự nộp do chống gian lận/hết giờ vẫn có thể xem lại theo cùng quy tắc.
+## V1.10 vẫn được giữ nguyên
 
-## Trộn câu
+- Rời màn hình tính ngay 1 vi phạm.
+- Lần 1–2 có cảnh báo và đếm ngược 15 giây; quá 15 giây tự nộp.
+- Lần rời thứ 3 tự nộp ngay.
+- Mobile chỉ dùng `visibilitychange -> hidden`; desktop gộp `blur + hidden` để tránh tính trùng.
+- Đáp án được lưu local trước rồi đồng bộ Supabase, không mất khi đổi tab/fullscreen/mất mạng.
+- Sau khi nộp, sinh viên xem lại toàn bộ câu và lựa chọn; đáp án đúng chỉ hiện nếu giảng viên cho phép.
+- Xóa lượt làm cuối cùng sẽ tự mở khóa nội dung đề; Reset lượt vẫn giữ khóa.
 
-- Part 5: trộn từng câu.
-- Part 6: trộn theo nguyên nhóm bài đọc.
-- Part 7: giữ cố định.
+## Cấu trúc quan trọng
 
-## Media
+- `assets/app.js` — giao diện, auth, thi, quản trị.
+- `assets/modules/anti-cheat.js` — chống gian lận V1.10.
+- `supabase/v1.10_exam_integrity_and_review.sql` — backend thi V1.10.
+- `supabase/v1.11_password_recovery.sql` — schema/trigger mật khẩu V1.11.
+- `supabase/functions/manage-user/index.ts` — tạo user + sinh lại mật khẩu sinh viên.
+- `supabase/functions/request-password-reset/index.ts` — gửi recovery email cho staff.
+- `backup/` — các bản source trước.
 
-Ảnh/audio nằm trong bucket private `test-media`. Signed URL dùng thời hạn 6 giờ để tránh hết hạn giữa bài thi dài.
+## Triển khai V1.11
 
+1. Nếu chưa có backend V1.10, chạy `supabase/v1.10_exam_integrity_and_review.sql` trước.
+2. Chạy `supabase/v1.11_password_recovery.sql`.
+3. Deploy `manage-user` với **Verify JWT = ON**.
+4. Deploy `request-password-reset` với **Verify JWT = OFF**.
+5. Supabase Auth → URL Configuration: thêm URL GitHub Pages vào Redirect URLs. Mặc định dự án này dùng `https://toeicfulltest.github.io/`.
+6. Upload toàn bộ frontend V1.11 lên GitHub Pages.
 
-## Khóa nội dung và xóa lượt làm
-
-Khi sinh viên bắt đầu lượt đầu tiên, đề được khóa để bảo toàn dữ liệu. `Reset lượt` không mở khóa. Nếu giảng viên **xóa hẳn tất cả lượt sinh viên** của bài kiểm tra, V1.10 tự mở khóa nội dung và tải lại trạng thái đề ngay, cho phép chỉnh sửa tiếp.
-
-## Triển khai
-
-1. Upload toàn bộ mã nguồn V1.10 lên GitHub Pages.
-2. Sau khi frontend V1.10 đã lên, chạy `supabase/v1.10_exam_integrity_and_review.sql` trong Supabase SQL Editor.
-3. Migration V1.10 tự chứa phần lưu đáp án cần thiết, nên có thể nâng trực tiếp từ V1.8 hoặc V1.9; không bắt buộc chạy SQL V1.9 trước.
-4. Không cần Python hay script ghép mã nào.
+> Lưu ý email: Supabase password recovery cần dịch vụ gửi email. Với triển khai thật, nên cấu hình SMTP riêng thay vì phụ thuộc email thử nghiệm mặc định.

@@ -284,3 +284,18 @@ details.group-box>summary{padding:2px}
   .review-choice{grid-template-columns:26px minmax(0,1fr)}
   .review-choice-tag{grid-column:2;justify-self:start}
 }
+
+/* V1.11 — password recovery + student temporary passwords */
+.login-help{margin-top:18px;padding-top:15px;border-top:1px solid var(--line);display:grid;gap:8px}
+.login-help p{margin:0;line-height:1.5}
+.info-box,.success-box{border-radius:12px;padding:12px 14px;line-height:1.55;margin-top:14px}
+.info-box{background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a}
+.success-box{background:#ecfdf3;border:1px solid #bbf7d0;color:#166534}
+.student-password-help{margin-top:18px}
+.temporary-password-box{display:flex;gap:10px;align-items:center;justify-content:space-between;margin:16px 0;padding:14px;border:1px solid var(--line);border-radius:14px;background:#f8fafc}
+.temporary-password-box code{font-size:1.15rem;font-weight:900;letter-spacing:.06em;overflow-wrap:anywhere;user-select:all}
+.row.end{justify-content:flex-end}
+@media(max-width:620px){
+  .temporary-password-box{align-items:stretch;flex-direction:column}
+  .temporary-password-box .btn,.temporary-password-box button{width:100%}
+}

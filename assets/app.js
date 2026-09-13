@@ -11,6 +11,7 @@ import {
   renderRichText,richEditorField,sanitizeRichHtml
 } from "./modules/rich-editor.js";
 
+const recoveryUrlHint = /(?:^|[&#])type=recovery(?:&|$)/.test(location.hash);
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const {uploadMedia,signedUrl,signedUrlMap}=createMediaService(sb);
 const appView = document.querySelector("#view");
@@ -22,6 +23,7 @@ const modalRoot = document.querySelector("#modalRoot");
 
 let session = null;
 let profile = null;
+let passwordRecoveryMode = recoveryUrlHint;
 let examState = null;
 let timerId = null;
 let liveChannel = null;
@@ -182,12 +184,19 @@ async function boot(){
   const {data} = await sb.auth.getSession();
   session = data.session;
   if(session) await loadProfile();
+  if(passwordRecoveryMode && session){
+    history.replaceState(null,"",`${location.pathname}#/reset-password`);
+  }
 
-  sb.auth.onAuthStateChange((_event, s)=>{
+  sb.auth.onAuthStateChange((event, s)=>{
     session = s;
     profile = null;
+    if(event==="PASSWORD_RECOVERY") passwordRecoveryMode=true;
     setTimeout(async ()=>{
       if(s) await loadProfile();
+      if(passwordRecoveryMode && s){
+        history.replaceState(null,"",`${location.pathname}#/reset-password`);
+      }
       render();
     }, 0);
   });
@@ -268,6 +277,15 @@ async function render(){
   }
   renderHeader();
 
+  if(passwordRecoveryMode && session && p!=="/reset-password"){
+    history.replaceState(null,"",`${location.pathname}#/reset-password`);
+    clearStaffPages();
+    return renderResetPassword();
+  }
+  if(session && profile?.role==="student" && profile?.must_change_password && p!=="/profile" && p!=="/reset-password"){
+    return go("/profile");
+  }
+
   if(p.startsWith("/exam/")){
     clearStaffPages();
     return renderExam(p.split("/")[2]);
@@ -287,6 +305,14 @@ async function render(){
     if(profile && ["teacher","system_admin"].includes(profile.role)) return requireStaff(()=>showStaffPage(`result:${id}`,()=>renderResult(id,true)));
     clearStaffPages();
     return renderResult(id,false);
+  }
+  if(p==="/forgot-password"){
+    clearStaffPages();
+    return renderForgotPassword();
+  }
+  if(p==="/reset-password"){
+    clearStaffPages();
+    return renderResetPassword();
   }
   if(p==="/login"){
     clearStaffPages();
@@ -367,6 +393,10 @@ function renderLogin(){
       <label>Mật khẩu<input type="password" name="password" required autocomplete="current-password"></label>
       <button class="primary">Đăng nhập</button>
     </form>
+    <div class="login-help">
+      <a href="#/forgot-password"><b>Quên mật khẩu — Giảng viên / Admin</b></a>
+      <p class="muted">Sinh viên quên mật khẩu: vui lòng liên hệ giảng viên để được cấp mật khẩu tạm thời mới.</p>
+    </div>
   </section>`;
   document.querySelector("#loginForm").onsubmit=async e=>{
     e.preventDefault();
@@ -379,13 +409,82 @@ function renderLogin(){
   };
 }
 
+function recoveryRedirectUrl(){
+  return `${location.origin}${location.pathname}`;
+}
+function renderForgotPassword(){
+  if(session){
+    if(!profile) return showLoading("Đang tải hồ sơ...");
+    return go(profile.role==="student"?"/student":"/teacher");
+  }
+  view.innerHTML=`<section class="card login-card">
+    <a class="muted" href="#/login">← Đăng nhập</a>
+    <h1>Quên mật khẩu</h1>
+    <p>Dành cho <b>Giảng viên và System Admin</b>. Hệ thống sẽ gửi liên kết đặt lại mật khẩu đến email tài khoản.</p>
+    <form id="forgotPasswordForm" class="stack">
+      <label>Email<input type="email" name="email" required autocomplete="email"></label>
+      <button class="primary">Gửi liên kết đặt lại</button>
+    </form>
+    <div class="info-box student-password-help"><b>Sinh viên quên mật khẩu?</b><br>Liên hệ giảng viên. Giảng viên có thể sinh mật khẩu tạm thời mới trong mục <b>Tài khoản</b> hoặc <b>Thành viên lớp</b>.</div>
+    <div id="forgotPasswordResult" class="muted" aria-live="polite"></div>
+  </section>`;
+  document.querySelector("#forgotPasswordForm").onsubmit=async e=>{
+    e.preventDefault();
+    const email=String(new FormData(e.target).get("email")||"").trim().toLowerCase();
+    const btn=e.target.querySelector("button");
+    const out=document.querySelector("#forgotPasswordResult");
+    btn.disabled=true;btn.textContent="Đang gửi…";out.textContent="";
+    const {data,error}=await sb.functions.invoke("request-password-reset",{body:{email,redirect_to:recoveryRedirectUrl()}});
+    btn.disabled=false;btn.textContent="Gửi liên kết đặt lại";
+    if(error) return toast("Chưa gửi được yêu cầu. Vui lòng thử lại.",6000);
+    out.innerHTML=`<div class="success-box">Nếu email thuộc tài khoản <b>Giảng viên/System Admin đang hoạt động</b>, hệ thống đã gửi liên kết đặt lại mật khẩu. Vui lòng kiểm tra cả thư rác.</div>`;
+  };
+}
+async function renderResetPassword(){
+  if(!session){
+    view.innerHTML=`<section class="card login-card"><h1>Liên kết không còn hiệu lực</h1><p class="muted">Vui lòng yêu cầu gửi lại liên kết đặt mật khẩu.</p><a class="btn primary" href="#/forgot-password">Gửi lại liên kết</a></section>`;
+    return;
+  }
+  if(!profile) await loadProfile();
+  if(profile?.role==="student"){
+    view.innerHTML=`<section class="card login-card"><h1>Khôi phục mật khẩu sinh viên</h1><div class="warning-box">Sinh viên không tự khôi phục mật khẩu qua email. Vui lòng liên hệ giảng viên để được cấp mật khẩu tạm thời mới.</div><button class="secondary" id="recoveryStudentSignout">Về đăng nhập</button></section>`;
+    document.querySelector("#recoveryStudentSignout").onclick=async()=>{passwordRecoveryMode=false;await sb.auth.signOut();go("/login")};
+    return;
+  }
+  view.innerHTML=`<section class="card login-card">
+    <h1>Đặt mật khẩu mới</h1>
+    <p class="muted">Tài khoản: ${esc(session.user.email||"")}</p>
+    <form id="recoveryPasswordForm" class="stack">
+      <label>Mật khẩu mới<input type="password" name="p1" minlength="6" required autocomplete="new-password"></label>
+      <label>Nhập lại mật khẩu<input type="password" name="p2" minlength="6" required autocomplete="new-password"></label>
+      <button class="primary">Lưu mật khẩu mới</button>
+    </form>
+  </section>`;
+  document.querySelector("#recoveryPasswordForm").onsubmit=async e=>{
+    e.preventDefault();
+    const f=new FormData(e.target),p1=String(f.get("p1")||""),p2=String(f.get("p2")||"");
+    if(p1.length<6) return toast("Mật khẩu tối thiểu 6 ký tự.");
+    if(p1!==p2) return toast("Hai mật khẩu chưa trùng nhau.");
+    const btn=e.target.querySelector("button");btn.disabled=true;btn.textContent="Đang lưu…";
+    const {error}=await sb.auth.updateUser({password:p1});
+    btn.disabled=false;btn.textContent="Lưu mật khẩu mới";
+    if(error) return toast(error.message,6000);
+    passwordRecoveryMode=false;
+    history.replaceState(null,"",`${location.pathname}#/teacher`);
+    toast("Đã đặt mật khẩu mới");
+    render();
+  };
+}
+
 
 async function renderProfile(){
   if(!profile) return showLoading("Đang tải hồ sơ...");
   const canRename=["teacher","system_admin"].includes(profile.role);
+  const mustChange=profile.role==="student" && !!profile.must_change_password;
   view.innerHTML=`<section class="card profile-card">
-    <a class="muted" href="${profile.role==="student"?"#/student":"#/teacher"}">← Quay lại</a>
-    <h1>Hồ sơ</h1>
+    ${mustChange?"":`<a class="muted" href="${profile.role==="student"?"#/student":"#/teacher"}">← Quay lại</a>`}
+    <h1>${mustChange?"Đặt mật khẩu mới":"Hồ sơ"}</h1>
+    ${mustChange?`<div class="warning-box"><b>Mật khẩu hiện tại là mật khẩu tạm thời.</b><br>Bạn cần đặt mật khẩu mới trước khi tiếp tục sử dụng hệ thống.</div>`:""}
     <div class="profile-grid">
       <form id="profileNameForm" class="stack">
         <h3>Thông tin cá nhân</h3>
@@ -422,6 +521,11 @@ async function renderProfile(){
     const {error}=await sb.auth.updateUser({password:p1});
     btn.disabled=false;btn.textContent="Đổi mật khẩu";
     if(error) return toast(error.message);
+    if(mustChange){
+      await loadProfile();
+      e.target.reset();toast("Đã đổi mật khẩu. Bạn có thể tiếp tục làm bài.");
+      return go("/student");
+    }
     e.target.reset();toast("Đã đổi mật khẩu");
   };
 }
@@ -460,24 +564,58 @@ async function renderAccounts(){
   view.innerHTML=`${staffNav("accounts")}
   <section class="card">
     <div class="row between wrap">
-      <div><h1>Tài khoản</h1><p class="muted">Tài khoản tồn tại độc lập với lớp.</p></div>
+      <div><h1>Tài khoản</h1><p class="muted">Tài khoản tồn tại độc lập với lớp. Giảng viên có thể sinh lại mật khẩu tạm thời cho sinh viên.</p></div>
       <div class="row wrap">
         <button class="secondary" id="bulkUser">↑ Nhập danh sách SV</button>
         <button class="primary" id="newUser">+ Tạo tài khoản</button>
       </div>
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Họ tên</th><th>Vai trò</th><th>Mã SV</th><th>Lớp</th><th>Trạng thái</th><th>Ngày tạo</th></tr></thead>
+      <thead><tr><th>Họ tên</th><th>Vai trò</th><th>Mã SV</th><th>Email</th><th>Lớp</th><th>Trạng thái</th><th>Ngày tạo</th><th>Thao tác</th></tr></thead>
       <tbody>${users.map(x=>`<tr>
-        <td>${esc(x.full_name)}</td><td>${esc(roleLabel(x.role))}</td><td>${esc(x.student_code||"—")}</td>
+        <td>${esc(x.full_name)}</td><td>${esc(roleLabel(x.role))}</td><td>${esc(x.student_code||"—")}</td><td>${esc(x.email||"—")}</td>
         <td>${x.role==="student"?(x.class_id?`<a href="#/class/${x.class_id}">${esc(classById[x.class_id]?.name||"Lớp")}</a>`:"Chưa gán"):"—"}</td>
-        <td>${x.is_active?'<span class="status ok">Hoạt động</span>':'<span class="status off">Khóa</span>'}</td>
-        <td>${fmt(x.created_at)}</td></tr>`).join("")||`<tr><td colspan="6" class="empty">Chưa có tài khoản</td></tr>`}</tbody>
+        <td>${x.is_active?'<span class="status ok">Hoạt động</span>':'<span class="status off">Khóa</span>'}${x.must_change_password?'<br><span class="status warn">Chờ đổi MK</span>':''}</td>
+        <td>${fmt(x.created_at)}</td>
+        <td>${x.role==="student"?`<button class="ghost sm reset-student-password" data-id="${x.id}" data-name="${esc(x.full_name)}">Sinh lại mật khẩu</button>`:"—"}</td></tr>`).join("")||`<tr><td colspan="8" class="empty">Chưa có tài khoản</td></tr>`}</tbody>
     </table></div>
   </section>`;
   document.querySelector("#newUser").onclick=()=>openNewUser(classes);
   document.querySelector("#bulkUser").onclick=()=>openBulkStudents(classes);
+  document.querySelectorAll(".reset-student-password").forEach(b=>b.onclick=()=>openResetStudentPassword(b.dataset.id,b.dataset.name));
 }
+
+function openResetStudentPassword(studentId,name){
+  modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal">
+    <div class="row between"><h2>Sinh lại mật khẩu?</h2><button class="ghost sm" data-close>Đóng</button></div>
+    <p>Sinh mật khẩu tạm thời mới cho <b>${esc(name||"sinh viên")}</b>.</p>
+    <div class="warning-box">Mật khẩu cũ sẽ ngừng hoạt động. Sinh viên phải đổi mật khẩu tạm thời ngay lần đăng nhập tiếp theo.</div>
+    <div class="row between"><button class="secondary" data-close2>Hủy</button><button class="primary" id="doResetStudentPassword">Sinh mật khẩu mới</button></div>
+  </div></div>`;
+  modalRoot.querySelector("[data-close]").onclick=closeModal;
+  modalRoot.querySelector("[data-close2]").onclick=closeModal;
+  modalRoot.querySelector("#doResetStudentPassword").onclick=async()=>{
+    const btn=modalRoot.querySelector("#doResetStudentPassword");btn.disabled=true;btn.textContent="Đang sinh…";
+    const {data,error}=await sb.functions.invoke("manage-user",{body:{action:"reset_student_password",user_id:studentId}});
+    if(error||data?.error){btn.disabled=false;btn.textContent="Sinh mật khẩu mới";return toast(data?.error||error.message,6000);}
+    const temp=String(data.temporary_password||"");
+    modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal">
+      <h2>Mật khẩu tạm thời mới</h2>
+      <p><b>${esc(data.student_name||name||"Sinh viên")}</b></p>
+      <div class="temporary-password-box"><code id="temporaryPasswordValue">${esc(temp)}</code><button class="secondary sm" id="copyTemporaryPassword">Sao chép</button></div>
+      <div class="warning-box"><b>Chỉ hiển thị mật khẩu này một lần.</b><br>Gửi trực tiếp cho sinh viên. Khi đăng nhập, sinh viên bắt buộc đặt mật khẩu mới.</div>
+      <div class="row end"><button class="primary" id="closeTemporaryPassword">Đã lưu mật khẩu</button></div>
+    </div></div>`;
+    modalRoot.querySelector("#copyTemporaryPassword").onclick=async()=>{
+      try{await navigator.clipboard.writeText(temp);toast("Đã sao chép mật khẩu");}
+      catch{toast("Không sao chép tự động được. Hãy chọn và sao chép thủ công.");}
+    };
+    modalRoot.querySelector("#closeTemporaryPassword").onclick=()=>{
+      closeModal();invalidateStaffData("users");invalidateStaffPage("accounts");invalidateStaffPage("teacher");
+    };
+  };
+}
+
 function openNewUser(classes=[]){
   modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal">
     <div class="row between"><h2>Tạo tài khoản</h2><button class="ghost sm" data-close>Đóng</button></div>
@@ -661,11 +799,12 @@ async function renderClassDetail(classId){
     <div class="row between wrap"><div><h2>Thành viên lớp</h2><p class="muted">Bỏ khỏi lớp không xóa tài khoản.</p></div><button id="addStudentsToClass" class="primary">+ Thêm sinh viên</button></div>
     <div class="table-wrap"><table><thead><tr><th>Họ tên</th><th>MSSV</th><th>Email</th><th>Trạng thái</th><th></th></tr></thead>
     <tbody>${students.map(s=>`<tr><td><b>${esc(s.full_name)}</b></td><td>${esc(s.student_code||"—")}</td><td>${esc(s.email||"—")}</td>
-      <td>${s.is_active?'<span class="status ok">Hoạt động</span>':'<span class="status off">Khóa</span>'}</td>
-      <td><button class="ghost sm remove-class-member" data-id="${s.id}" data-name="${esc(s.full_name)}">Bỏ khỏi lớp</button></td></tr>`).join("")||`<tr><td colspan="5" class="empty">Lớp chưa có sinh viên.</td></tr>`}</tbody></table></div>
+      <td>${s.is_active?'<span class="status ok">Hoạt động</span>':'<span class="status off">Khóa</span>'}${s.must_change_password?'<br><span class="status warn">Chờ đổi MK</span>':''}</td>
+      <td><div class="row wrap"><button class="ghost sm reset-student-password" data-id="${s.id}" data-name="${esc(s.full_name)}">Sinh lại mật khẩu</button><button class="ghost sm remove-class-member" data-id="${s.id}" data-name="${esc(s.full_name)}">Bỏ khỏi lớp</button></div></td></tr>`).join("")||`<tr><td colspan="5" class="empty">Lớp chưa có sinh viên.</td></tr>`}</tbody></table></div>
   </section>`;
   document.querySelector("#editClass").onclick=()=>openClass(cls);
   document.querySelector("#addStudentsToClass").onclick=()=>openAddStudentsToClass(cls,users);
+  document.querySelectorAll(".reset-student-password").forEach(b=>b.onclick=()=>openResetStudentPassword(b.dataset.id,b.dataset.name));
   document.querySelectorAll(".remove-class-member").forEach(b=>b.onclick=()=>confirmRemoveStudentFromClass(cls,b.dataset.id,b.dataset.name));
 }
 function confirmRemoveStudentFromClass(cls,studentId,name){
