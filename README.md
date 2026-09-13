@@ -1,4 +1,25 @@
-# TOEIC Full Test — V1.11
+# TOEIC Full Test — V1.12
+
+## V1.12 — Exam Readiness
+
+V1.12 đồng bộ lớp học/tài khoản/thi thật/xuất điểm trước ngày kiểm tra:
+
+- `class_members` là nguồn gán lớp chính; `profiles.class_id` chỉ là trường mirror tương thích giao diện. Mỗi sinh viên chỉ thuộc tối đa 1 lớp.
+- Gán/chuyển/bỏ sinh viên khỏi lớp dùng RPC `staff_set_student_class` và cập nhật đồng bộ.
+- LIVE tách `Sĩ số` với `Lượt thi`; tab Bài làm chỉ liệt kê attempt thật.
+- Excel `Tong_hop` không chứa lượt `reset`; thêm `Danh_sach_lop` và `Lich_su_reset` để đối soát.
+- Sinh viên bị khóa không thể bắt đầu lượt thi mới. Xóa tài khoản chỉ cho phép khi chưa có lịch sử; nếu đã có lịch sử thì khóa thay vì xóa.
+- Upload Excel/CSV dùng Edge Function `student-admin`: sinh viên đã tồn tại được gán/chuyển lớp; user mới được cleanup nếu tạo dở.
+- Preflight chặn publish nếu lớp chưa có sinh viên hoạt động.
+- Mặc định mới là không lộ đáp án sau nộp; hai đề thật ngày 15/09/2026 đã đặt `show_answers_after_submit=false`.
+- Dọn khóa đề mồ côi khi test không còn attempt nào.
+
+### Triển khai V1.12
+
+1. Chạy lần lượt `supabase/v1.12a_class_architecture.sql`, `v1.12b_results_export.sql`, `v1.12c_exam_guards.sql`, `v1.12d_security_cleanup.sql`.
+2. Deploy `supabase/functions/student-admin/index.ts` với Verify JWT ON.
+3. Upload toàn bộ frontend V1.12 lên GitHub Pages.
+4. Trước khi Publish đề thật, kiểm tra roster, giờ mở/đóng, và giữ `Cho xem đáp án = Không`.
 
 Ứng dụng thi TOEIC dùng Supabase Auth/PostgreSQL/Storage và GitHub Pages.
 

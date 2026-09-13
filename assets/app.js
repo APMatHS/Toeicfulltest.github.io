@@ -356,6 +356,10 @@ function requireStudent(fn){
   if(!session) return go("/login");
   if(!profile) return showLoading("Đang tải hồ sơ...");
   if(profile.role!=="student") return go("/teacher");
+  if(profile.is_active===false){
+    view.innerHTML=`<section class="card"><h2>Tài khoản đang bị khóa</h2><p class="muted">Liên hệ giảng viên để được mở khóa. Tài khoản bị khóa không thể bắt đầu lượt thi mới.</p></section>`;
+    return;
+  }
   return fn();
 }
 function showLoading(text="Đang tải..."){ view.innerHTML=`<section class="card">${esc(text)}</section>`; }
@@ -577,12 +581,40 @@ async function renderAccounts(){
         <td>${x.role==="student"?(x.class_id?`<a href="#/class/${x.class_id}">${esc(classById[x.class_id]?.name||"Lớp")}</a>`:"Chưa gán"):"—"}</td>
         <td>${x.is_active?'<span class="status ok">Hoạt động</span>':'<span class="status off">Khóa</span>'}${x.must_change_password?'<br><span class="status warn">Chờ đổi MK</span>':''}</td>
         <td>${fmt(x.created_at)}</td>
-        <td>${x.role==="student"?`<button class="ghost sm reset-student-password" data-id="${x.id}" data-name="${esc(x.full_name)}">Sinh lại mật khẩu</button>`:"—"}</td></tr>`).join("")||`<tr><td colspan="8" class="empty">Chưa có tài khoản</td></tr>`}</tbody>
+        <td>${x.role==="student"?`<div class="row wrap"><button class="ghost sm reset-student-password" data-id="${x.id}" data-name="${esc(x.full_name)}">Sinh lại mật khẩu</button><button class="ghost sm student-active-action" data-id="${x.id}" data-name="${esc(x.full_name)}" data-active="${x.is_active?"1":"0"}">${x.is_active?"Khóa":"Mở khóa"}</button><button class="danger sm delete-student-account" data-id="${x.id}" data-name="${esc(x.full_name)}">Xóa TK</button></div>`:"—"}</td></tr>`).join("")||`<tr><td colspan="8" class="empty">Chưa có tài khoản</td></tr>`}</tbody>
     </table></div>
   </section>`;
   document.querySelector("#newUser").onclick=()=>openNewUser(classes);
   document.querySelector("#bulkUser").onclick=()=>openBulkStudents(classes);
   document.querySelectorAll(".reset-student-password").forEach(b=>b.onclick=()=>openResetStudentPassword(b.dataset.id,b.dataset.name));
+  document.querySelectorAll(".student-active-action").forEach(b=>b.onclick=()=>confirmStudentAccountAction("active",b.dataset.id,b.dataset.name,b.dataset.active==="1"));
+  document.querySelectorAll(".delete-student-account").forEach(b=>b.onclick=()=>confirmStudentAccountAction("delete",b.dataset.id,b.dataset.name,true));
+}
+
+async function confirmStudentAccountAction(action,studentId,name,isActive=true){
+  const deleting=action==="delete";
+  const title=deleting?"Xóa tài khoản sinh viên?":(isActive?"Khóa tài khoản sinh viên?":"Mở khóa tài khoản sinh viên?");
+  const detail=deleting
+    ? "Chỉ tài khoản chưa có lịch sử hệ thống mới được xóa. Nếu đã từng làm bài, hệ thống sẽ yêu cầu khóa tài khoản thay vì xóa."
+    : (isActive?"Sinh viên sẽ không thể bắt đầu lượt thi mới cho tới khi được mở khóa.":"Sinh viên sẽ được phép truy cập các bài thi đúng lớp trở lại.");
+  modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal"><h2>${title}</h2><p><b>${esc(name||"Sinh viên")}</b></p><div class="warning-box">${detail}</div><div class="row between"><button class="secondary" data-close>Hủy</button><button class="${deleting?"danger":"primary"}" id="doStudentAccountAction">${deleting?"Xóa tài khoản":(isActive?"Khóa":"Mở khóa")}</button></div></div></div>`;
+  modalRoot.querySelector("[data-close]").onclick=closeModal;
+  modalRoot.querySelector("#doStudentAccountAction").onclick=async()=>{
+    const body=deleting?{action:"delete_student",user_id:studentId}:{action:"set_active",user_id:studentId,is_active:!isActive};
+    const {data,error}=await sb.functions.invoke("student-admin",{body});
+    if(error||data?.error){
+      const msg=data?.error||error?.message||"Không thực hiện được";
+      if(deleting){
+        closeModal();
+        toast(msg,7000);
+        return confirmStudentAccountAction("active",studentId,name,true);
+      }
+      return toast(msg,7000);
+    }
+    closeModal();toast(deleting?"Đã xóa tài khoản":"Đã cập nhật trạng thái tài khoản");
+    invalidateStaffData("users");invalidateStaffPage("accounts");invalidateStaffPage("teacher");invalidateStaffPage("classes");
+    const r=route(); if(r.startsWith("/class/")){const cid=r.split("/")[2];invalidateStaffPage(`class:${cid}`);await showStaffPage(`class:${cid}`,()=>renderClassDetail(cid));}else await showStaffPage("accounts",renderAccounts);
+  };
 }
 
 function openResetStudentPassword(studentId,name){
@@ -668,13 +700,13 @@ function mapStudentRows(rows){
 }
 function openBulkStudents(classes=[]){
   modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal wide">
-    <div class="row between"><div><h2>Nhập danh sách sinh viên</h2><p class="muted">Excel/CSV: Họ tên · MSSV · Email · Password. Password tối thiểu 6 ký tự.</p></div><button class="ghost sm" data-close>Đóng</button></div>
+    <div class="row between"><div><h2>Nhập danh sách sinh viên</h2><p class="muted">Excel/CSV: Họ tên · MSSV · Email · Password. Password bắt buộc với sinh viên mới; sinh viên đã tồn tại có thể để trống và sẽ được gán/chuyển vào lớp đã chọn, không tạo trùng email.</p></div><button class="ghost sm" data-close>Đóng</button></div>
     <div class="form-grid">
       <label class="span-2">File Excel/CSV<input id="studentFile" type="file" accept=".xlsx,.xls,.csv" required></label>
       <label class="span-2">Gán vào lớp<select id="bulkClass"><option value="">Chưa gán lớp</option>${classes.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select></label>
     </div>
     <div id="bulkPreview" class="preview-box muted">Chọn file để xem trước.</div>
-    <div class="row between"><span id="bulkSummary" class="muted"></span><button class="primary" id="doBulk" disabled>Tạo sinh viên</button></div>
+    <div class="row between"><span id="bulkSummary" class="muted"></span><button class="primary" id="doBulk" disabled>Nhập sinh viên</button></div>
   </div></div>`;
   modalRoot.querySelector("[data-close]").onclick=closeModal;
   let parsed=[];
@@ -689,9 +721,9 @@ function openBulkStudents(classes=[]){
       const wb=XLSX.read(buf);
       const ws=wb.Sheets[wb.SheetNames[0]];
       parsed=mapStudentRows(XLSX.utils.sheet_to_json(ws,{defval:""}));
-      const invalid=parsed.filter(r=>!r.full_name||!r.email||r.password.length<6);
+      const invalid=parsed.filter(r=>!r.full_name||!r.email);
       preview.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Dòng</th><th>Họ tên</th><th>MSSV</th><th>Email</th><th>Password</th><th></th></tr></thead>
-      <tbody>${parsed.slice(0,100).map(r=>`<tr><td>${r._row}</td><td>${esc(r.full_name)}</td><td>${esc(r.student_code)}</td><td>${esc(r.email)}</td><td>${r.password?"••••••":"—"}</td><td>${(!r.full_name||!r.email||r.password.length<6)?'<span class="status off">Lỗi</span>':'<span class="status ok">OK</span>'}</td></tr>`).join("")}</tbody></table></div>
+      <tbody>${parsed.slice(0,100).map(r=>`<tr><td>${r._row}</td><td>${esc(r.full_name)}</td><td>${esc(r.student_code)}</td><td>${esc(r.email)}</td><td>${r.password?"••••••":"—"}</td><td>${(!r.full_name||!r.email)?'<span class="status off">Lỗi</span>':'<span class="status ok">OK</span>'}</td></tr>`).join("")}</tbody></table></div>
       ${parsed.length>100?`<p class="muted">Đang hiển thị 100/${parsed.length} dòng.</p>`:""}`;
       summary.textContent=`${parsed.length} sinh viên · ${invalid.length} dòng chưa hợp lệ`;
       goBtn.disabled=!parsed.length || invalid.length>0;
@@ -702,12 +734,12 @@ function openBulkStudents(classes=[]){
   goBtn.onclick=async()=>{
     const users=parsed.map(({_row,...r})=>r);
     goBtn.disabled=true; goBtn.textContent="Đang tạo...";
-    const {data,error}=await sb.functions.invoke("manage-user",{body:{
-      action:"bulk_create_students",
+    const {data,error}=await sb.functions.invoke("student-admin",{body:{
+      action:"bulk_students",
       class_id:modalRoot.querySelector("#bulkClass").value||null,
       users
     }});
-    goBtn.disabled=false; goBtn.textContent="Tạo sinh viên";
+    goBtn.disabled=false; goBtn.textContent="Nhập sinh viên";
     if(error||data?.error) return toast(data?.error||error.message,6000);
     const failed=(data.results||[]).filter(x=>!x.ok);
     if(failed.length){
@@ -715,7 +747,7 @@ function openBulkStudents(classes=[]){
       summary.textContent=`${data.success} thành công · ${data.failed} lỗi`;
       return;
     }
-    closeModal(); toast(`Đã tạo ${data.success} sinh viên`); invalidateStaffData("users"); invalidateStaffPage("accounts"); invalidateStaffPage("teacher"); showStaffPage("accounts",renderAccounts);
+    closeModal(); toast(`Đã xử lý ${data.success} sinh viên`); invalidateStaffData("users"); invalidateStaffPage("accounts"); invalidateStaffPage("teacher"); showStaffPage("accounts",renderAccounts);
   };
 }
 
@@ -800,12 +832,14 @@ async function renderClassDetail(classId){
     <div class="table-wrap"><table><thead><tr><th>Họ tên</th><th>MSSV</th><th>Email</th><th>Trạng thái</th><th></th></tr></thead>
     <tbody>${students.map(s=>`<tr><td><b>${esc(s.full_name)}</b></td><td>${esc(s.student_code||"—")}</td><td>${esc(s.email||"—")}</td>
       <td>${s.is_active?'<span class="status ok">Hoạt động</span>':'<span class="status off">Khóa</span>'}${s.must_change_password?'<br><span class="status warn">Chờ đổi MK</span>':''}</td>
-      <td><div class="row wrap"><button class="ghost sm reset-student-password" data-id="${s.id}" data-name="${esc(s.full_name)}">Sinh lại mật khẩu</button><button class="ghost sm remove-class-member" data-id="${s.id}" data-name="${esc(s.full_name)}">Bỏ khỏi lớp</button></div></td></tr>`).join("")||`<tr><td colspan="5" class="empty">Lớp chưa có sinh viên.</td></tr>`}</tbody></table></div>
+      <td><div class="row wrap"><button class="ghost sm reset-student-password" data-id="${s.id}" data-name="${esc(s.full_name)}">Sinh lại mật khẩu</button><button class="ghost sm student-active-action" data-id="${s.id}" data-name="${esc(s.full_name)}" data-active="${s.is_active?"1":"0"}">${s.is_active?"Khóa":"Mở khóa"}</button><button class="ghost sm remove-class-member" data-id="${s.id}" data-name="${esc(s.full_name)}">Bỏ khỏi lớp</button><button class="danger sm delete-student-account" data-id="${s.id}" data-name="${esc(s.full_name)}">Xóa TK</button></div></td></tr>`).join("")||`<tr><td colspan="5" class="empty">Lớp chưa có sinh viên.</td></tr>`}</tbody></table></div>
   </section>`;
   document.querySelector("#editClass").onclick=()=>openClass(cls);
   document.querySelector("#addStudentsToClass").onclick=()=>openAddStudentsToClass(cls,users);
   document.querySelectorAll(".reset-student-password").forEach(b=>b.onclick=()=>openResetStudentPassword(b.dataset.id,b.dataset.name));
+  document.querySelectorAll(".student-active-action").forEach(b=>b.onclick=()=>confirmStudentAccountAction("active",b.dataset.id,b.dataset.name,b.dataset.active==="1"));
   document.querySelectorAll(".remove-class-member").forEach(b=>b.onclick=()=>confirmRemoveStudentFromClass(cls,b.dataset.id,b.dataset.name));
+  document.querySelectorAll(".delete-student-account").forEach(b=>b.onclick=()=>confirmStudentAccountAction("delete",b.dataset.id,b.dataset.name,true));
 }
 function confirmRemoveStudentFromClass(cls,studentId,name){
   modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal">
@@ -1183,6 +1217,8 @@ function bindTestHeaderActions(id,t,staticCount=0){
 function showPreflight(check={}){
   modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal"><div class="row between"><h2>Chưa thể xuất bản</h2><button class="ghost sm" data-close>Đóng</button></div><div class="stack preflight-list">
     <div>${check.class_missing?"❌":"✅"} Đã gán lớp</div>
+    <div>${check.class_empty?"❌":"✅"} ${check.active_student_count||0} sinh viên hoạt động trong lớp</div>
+    <div>${check.show_answers_after_submit?"⚠":"✅"} ${check.show_answers_after_submit?"Đang bật xem đáp án sau khi nộp":"Đáp án đúng đang được ẩn sau khi nộp"}</div>
     <div>${check.question_count>0?"✅":"❌"} ${check.question_count||0} câu hỏi</div>
     <div>${check.missing_or_extra_choices===0?"✅":"❌"} ${check.missing_or_extra_choices||0} câu không đủ đúng 4 lựa chọn</div>
     <div>${check.invalid_correct_choice===0?"✅":"❌"} ${check.invalid_correct_choice||0} câu có đáp án đúng không hợp lệ</div>
@@ -1337,7 +1373,8 @@ async function renderLiveTab(testId){
     if(error) return document.querySelector("#liveRoot").innerHTML=`<div class="warning-box">${esc(error.message)}</div>`;
     const rows=data.rows||[];
     const counts={
-      total:rows.length,
+      roster:Number(data.roster_count??rows.length),
+      attempts:Number(data.attempt_count??rows.filter(r=>r.attempt_id).length),
       in:rows.filter(r=>r.status==="in_progress").length,
       done:rows.filter(r=>["submitted","auto_submitted"].includes(r.status)).length,
       none:rows.filter(r=>!r.attempt_id).length,
@@ -1345,7 +1382,7 @@ async function renderLiveTab(testId){
     };
     const root=document.querySelector("#liveRoot"); if(!root) return;
     root.innerHTML=`<div class="row between wrap"><div><h2>LIVE</h2><p class="muted">Tự cập nhật khi sinh viên làm bài.</p></div><button class="secondary" id="liveExcel">↓ Excel hiện tại</button></div>
-    <div class="live-kpis">${[["Tổng",counts.total],["Đang làm",counts.in],["Đã nộp",counts.done],["Chưa vào",counts.none],["Có vi phạm",counts.viol]].map(([a,b])=>`<div><span>${a}</span><b>${b}</b></div>`).join("")}</div>
+    <div class="live-kpis">${[["Sĩ số",counts.roster],["Lượt thi",counts.attempts],["Đang làm",counts.in],["Đã nộp",counts.done],["Chưa vào",counts.none],["Có vi phạm",counts.viol]].map(([a,b])=>`<div><span>${a}</span><b>${b}</b></div>`).join("")}</div>
     <div class="row wrap live-filters">${["all","in_progress","done","none","viol"].map(k=>`<button class="${(testWorkspace?.liveFilter||"all")===k?"primary":"secondary"} sm live-filter" data-filter="${k}">${({all:"Tất cả",in_progress:"Đang làm",done:"Đã nộp",none:"Chưa làm",viol:"Có vi phạm"})[k]}</button>`).join("")}</div>
     <div class="table-wrap"><table id="liveTable"><thead><tr><th>Họ tên</th><th>MSSV</th><th>Lượt</th><th>Trạng thái</th><th>Tiến độ</th><th>Bắt đầu</th><th>Còn lại</th><th>Vi phạm</th><th>Điểm</th></tr></thead>
     <tbody>${rows.map(r=>liveRow(r)).join("")||`<tr><td colspan="9" class="empty">Lớp chưa có sinh viên.</td></tr>`}</tbody></table></div>`;
@@ -1394,7 +1431,7 @@ async function renderSubmissionsTab(testId){
   const rows=data.students||[];
   root.innerHTML=`<div class="row between wrap"><div><h2>Bài làm sinh viên</h2><p class="muted">Xem từng lượt, reset để cho làm lại hoặc xóa lượt. Mọi thao tác quản trị đều được ghi log.</p></div><button class="primary" id="subExcel">↓ Tải Excel</button></div>
   <div class="table-wrap"><table><thead><tr><th>Họ tên</th><th>MSSV</th><th>Lần</th><th>Trạng thái</th><th>Bắt đầu</th><th>Nộp</th><th>Đúng</th><th>Vi phạm</th><th>Thao tác</th></tr></thead>
-  <tbody>${rows.map(r=>`<tr><td>${esc(r.full_name)}</td><td>${esc(r.student_code||"—")}</td><td>${r.attempt_no||"—"}</td><td>${r.attempt_id?statusBadge(r.status):'<span class="status off">Chưa làm</span>'}</td><td>${fmt(r.started_at)}</td><td>${fmt(r.submitted_at)}</td><td>${r.correct_count??"—"}</td><td>${r.violation_count||0}</td><td>${submissionActions(r)}</td></tr>`).join("")}</tbody></table></div>`;
+  <tbody>${rows.map(r=>`<tr><td>${esc(r.full_name)}</td><td>${esc(r.student_code||"—")}</td><td>${r.attempt_no||"—"}</td><td>${r.attempt_id?statusBadge(r.status):'<span class="status off">Chưa làm</span>'}</td><td>${fmt(r.started_at)}</td><td>${fmt(r.submitted_at)}</td><td>${r.correct_count??"—"}</td><td>${r.violation_count||0}</td><td>${submissionActions(r)}</td></tr>`).join("")||'<tr><td colspan="9" class="empty">Chưa có lượt làm nào.</td></tr>'}</tbody></table></div>`;
   document.querySelector("#subExcel").onclick=()=>exportTestExcel(testId);
   document.querySelectorAll(".reset-attempt").forEach(b=>b.onclick=()=>confirmAttemptAction("reset",testId,b.dataset.id,b.dataset.name));
   document.querySelectorAll(".delete-attempt").forEach(b=>b.onclick=()=>confirmAttemptAction("delete",testId,b.dataset.id,b.dataset.name));
@@ -1437,10 +1474,14 @@ async function exportTestExcel(testId){
   for(const s of students) for(const v of s.violations||[]) violations.push({
     "Họ tên":s.full_name,MSSV:s.student_code||"","Lần làm":s.attempt_no||"","Sự kiện":v.event_type,"Lần":v.violation_number,"Thời điểm":new Date(v.occurred_at).toLocaleString("vi-VN")
   });
+  const roster=(data.roster||[]).map((r,i)=>({STT:i+1,"Họ tên":r.full_name,MSSV:r.student_code||"",Email:r.email||"","Trạng thái":r.is_active?"Hoạt động":"Khóa"}));
+  const resetHistory=(data.reset_history||[]).map(r=>({"Họ tên":r.full_name,MSSV:r.student_code||"","Lần làm":r.attempt_no||"","Trạng thái":r.status,"Bắt đầu":r.started_at?new Date(r.started_at).toLocaleString("vi-VN"):"","Kết thúc":r.submitted_at?new Date(r.submitted_at).toLocaleString("vi-VN"):"","Lý do":r.submission_reason||""}));
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(summary),"Tong_hop");
   XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(detail),"Chi_tiet");
   XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(violations),"Vi_pham");
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(roster),"Danh_sach_lop");
+  if(resetHistory.length) XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(resetHistory),"Lich_su_reset");
   const safe=(data.test?.title||"ket-qua").replace(/[\\/:*?"<>|]+/g,"-");
   XLSX.writeFile(wb,`${safe}.xlsx`);
   toast("Đã tạo file Excel");
