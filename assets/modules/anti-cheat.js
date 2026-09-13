@@ -60,13 +60,18 @@ export function createAntiCheatController({
     el.id="antiCheatOverlay";
     el.className="anti-cheat-overlay";
     el.hidden=true;
-    el.innerHTML=`<div class="anti-cheat-panel" role="alert" aria-live="assertive">
+    el.innerHTML=`<div class="anti-cheat-panel" role="dialog" aria-modal="true" aria-live="assertive">
       <div class="anti-cheat-kicker">CẢNH BÁO RỜI MÀN HÌNH</div>
-      <div class="anti-cheat-count" data-ac-count>15</div>
+      <div class="anti-cheat-count-wrap" data-ac-count-wrap>
+        <div class="anti-cheat-count" data-ac-count>15</div>
+        <div class="anti-cheat-count-unit">giây để quay lại</div>
+      </div>
       <h2 data-ac-title>Quay lại bài thi ngay</h2>
       <p data-ac-message>Mỗi lần rời màn hình được tính ngay là 1 vi phạm. Quá 15 giây hoặc vi phạm lần thứ 3, bài sẽ tự động nộp.</p>
       <div class="anti-cheat-meta" data-ac-meta></div>
+      <button type="button" class="primary anti-cheat-return-btn" data-ac-return hidden>Quay lại bài thi</button>
     </div>`;
+    el.querySelector("[data-ac-return]")?.addEventListener("click",acknowledgeReturn);
     document.body.appendChild(el);
     return el;
   }
@@ -74,10 +79,33 @@ export function createAntiCheatController({
   function updateOverlay(state){
     if(!state) return;
     const el=ensureOverlay();
+    const countWrap=el.querySelector("[data-ac-count-wrap]");
+    const returnBtn=el.querySelector("[data-ac-return]");
+    const title=el.querySelector("[data-ac-title]");
+    const message=el.querySelector("[data-ac-message]");
+    const count=state.violationCount ?? Number(activeExam()?.payload?.attempt?.violation_count||0);
+
+    if(state.returned){
+      if(countWrap) countWrap.hidden=true;
+      if(title) title.textContent="Đã ghi nhận vi phạm";
+      if(message) message.textContent="Bạn đã quay lại bài thi. Hãy xác nhận để tiếp tục làm bài.";
+      if(returnBtn) returnBtn.hidden=false;
+      el.querySelector("[data-ac-meta]").textContent=`Vi phạm: ${count}/3 · Lần thứ 3 sẽ tự động nộp`;
+      el.hidden=false;
+      if(!state.returnFocusQueued){
+        state.returnFocusQueued=true;
+        requestAnimationFrame(()=>returnBtn?.focus());
+      }
+      return;
+    }
+
     const elapsed=Math.max(0,Date.now()-state.startedAt);
     const left=Math.max(0,Math.ceil((RETURN_LIMIT_MS-elapsed)/1000));
+    if(countWrap) countWrap.hidden=false;
     el.querySelector("[data-ac-count]").textContent=String(left);
-    const count=state.violationCount ?? Number(activeExam()?.payload?.attempt?.violation_count||0);
+    if(title) title.textContent="Quay lại bài thi ngay";
+    if(message) message.textContent="Mỗi lần rời màn hình được tính ngay là 1 vi phạm. Quá 15 giây hoặc vi phạm lần thứ 3, bài sẽ tự động nộp.";
+    if(returnBtn) returnBtn.hidden=true;
     el.querySelector("[data-ac-meta]").textContent=`Vi phạm: ${count}/3 · Rời quá 15 giây sẽ tự động nộp`;
     el.hidden=false;
   }
@@ -87,6 +115,14 @@ export function createAntiCheatController({
     if(el) el.hidden=true;
   }
 
+  function acknowledgeReturn(){
+    const state=away;
+    if(!state || state.closed || !state.returned) return;
+    if(state.ticker) clearInterval(state.ticker);
+    away=null;
+    hideOverlay();
+  }
+
   async function sendImmediateViolation(state){
     if(!state || state.violationSent || state.sendingViolation) return;
     const exam=activeExam();
@@ -94,7 +130,7 @@ export function createAntiCheatController({
     state.sendingViolation=true;
     try{
       const details={
-        policy:"v1.10_exit_immediate",
+        policy:"v1.13_exit_immediate_ack",
         phase:"leave",
         left_at:new Date(state.startedAt).toISOString(),
         sources:[...state.sources],
@@ -107,7 +143,7 @@ export function createAntiCheatController({
         details,
         clientEventId:state.leaveEventId
       });
-      if(error){ console.error("Anti-cheat V1.10:",error); return; }
+      if(error){ console.error("Anti-cheat V1.13:",error); return; }
       if(data?.duplicate){ state.violationSent=true; return; }
       if(data?.ignored) return;
       state.violationSent=true;
@@ -125,7 +161,7 @@ export function createAntiCheatController({
   }
 
   async function enforceTimeout(state){
-    if(!state || state.closed || state.timeoutSending) return false;
+    if(!state || state.closed || state.timeoutSending || state.returned) return false;
     if(Date.now()-state.startedAt<RETURN_LIMIT_MS) return false;
     const exam=activeExam();
     if(!exam || exam.attemptId!==state.attemptId) return false;
@@ -137,7 +173,7 @@ export function createAntiCheatController({
         attemptId:state.attemptId,
         leaveEventId:state.leaveEventId
       });
-      if(error){ console.error("Anti-cheat timeout V1.10:",error); return false; }
+      if(error){ console.error("Anti-cheat timeout V1.13:",error); return false; }
       if(data?.submitted){
         state.closed=true;
         hideOverlay();
@@ -153,6 +189,7 @@ export function createAntiCheatController({
   function startTicker(state){
     clearInterval(state.ticker);
     state.ticker=setInterval(()=>{
+      if(state.returned){clearInterval(state.ticker);return;}
       updateOverlay(state);
       if(Date.now()-state.startedAt>=RETURN_LIMIT_MS) enforceTimeout(state);
     },TICK_MS);
@@ -164,8 +201,14 @@ export function createAntiCheatController({
     if(mobile && source!=="tab_hidden") return;
 
     if(away && away.attemptId===exam.attemptId){
-      away.sources.add(source);
-      return;
+      if(!away.returned){
+        away.sources.add(source);
+        return;
+      }
+      // Sinh viên đã quay lại nhưng chưa bấm xác nhận rồi lại rời màn hình:
+      // đây là một lần rời mới và phải được ghi nhận độc lập.
+      if(away.ticker) clearInterval(away.ticker);
+      away=null;
     }
 
     away={
@@ -178,7 +221,9 @@ export function createAntiCheatController({
       timeoutSending:false,
       violationCount:Number(exam.payload?.attempt?.violation_count||0),
       ticker:null,
-      closed:false
+      closed:false,
+      returned:false,
+      returnFocusQueued:false
     };
     updateOverlay(away);
     beep(980,0.15);
@@ -189,23 +234,27 @@ export function createAntiCheatController({
   async function endAway(){
     if(document.visibilityState==="hidden") return;
     const state=away;
-    if(!state) return;
+    if(!state || state.returned) return;
+
     if(Date.now()-state.startedAt>=RETURN_LIMIT_MS){
       const submitted=await enforceTimeout(state);
       if(submitted) return;
     }
+    if(state.closed) return;
+
+    // Dừng bộ đếm ngay tại thời điểm trình duyệt thực sự quay lại visible/focus.
+    // Không để độ trễ mạng làm sinh viên bị tính quá 15 giây oan.
+    if(state.ticker) clearInterval(state.ticker);
+    state.returned=true;
+    state.returnedAt=Date.now();
+    updateOverlay(state);
+
     if(!state.violationSent) await sendImmediateViolation(state);
-    clearInterval(state.ticker);
-    away=null;
-    hideOverlay();
-    if(state.violationSent && !state.closed){
-      onWarning?.({
-        violation_count:state.violationCount,
-        limit:3,
-        duration_seconds:Math.round((Date.now()-state.startedAt)/100)/10,
-        reason:"returned_within_15_seconds"
-      });
-    }
+    if(state.closed) return;
+    updateOverlay(state);
+
+    // V1.13: không tự đóng cảnh báo và không dùng toast thay thế.
+    // Sinh viên phải chủ động bấm “Quay lại bài thi”.
   }
 
   function reset(){
