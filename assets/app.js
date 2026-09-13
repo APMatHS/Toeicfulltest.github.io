@@ -6,6 +6,9 @@ import { esc,fmt,route,go,roleLabel,statusBadge,readJSON,writeJSON,debounce } fr
 import { createMediaService } from "./modules/media.js";
 import { bindAuthoringFilter,renderAuthoringMarkup } from "./modules/authoring-view.js";
 import { createAntiCheatController } from "./modules/anti-cheat.js";
+import { loadAttemptCounts,renderStaffTestsTable } from "./modules/staff-tests.js";
+import { formatScore10 } from "./modules/score-utils.js";
+import { createStaffResultsController } from "./modules/staff-results.js";
 import {
   bindRichEditors,embeddedImagePaths,hydrateEmbeddedImages,
   renderRichText,richEditorField,sanitizeRichHtml
@@ -70,6 +73,14 @@ function closeModal(){ modalRoot.innerHTML = ""; }
 function clearLiveChannel(){
   if(liveChannel){ try{ sb.removeChannel(liveChannel); }catch{} liveChannel=null; }
 }
+const staffResults=createStaffResultsController({
+  sb,XLSX,esc,fmt,statusBadge,toast,
+  getWorkspace:()=>testWorkspace,
+  setLiveChannel:channel=>{liveChannel=channel;},
+  clearLiveChannel,
+  refreshCurrentTest:(id,tab)=>refreshCurrentTest(id,tab)
+});
+const {renderPracticeTab,renderLiveTab,renderSubmissionsTab,exportTestExcel}=staffResults;
 function uiStateKey(testId){ return `toeic.ui.${session?.user?.id||"anon"}.${testId}`; }
 function authorDraftKey(testId){ return `toeic.authorDraft.${session?.user?.id||"anon"}.${testId}`; }
 function attemptQueueKey(attemptId){ return `toeic.answerQueue.${attemptId}`; }
@@ -901,11 +912,11 @@ async function renderTests(){
   if(!staffDataCache.tests) showLoading();
   await prefetchStaffData();
   const data=staffDataCache.tests||[];
+  const counts=await loadAttemptCounts(sb,data);
   view.innerHTML=`${staffNav("tests")}
   <section class="card">
-    <div class="row between wrap"><div><h1>Bài kiểm tra</h1><p class="muted">Tạo thủ công, nhập file, nhân bản bài cũ; khu vực AI đã được chuẩn bị cho giai đoạn sau.</p></div><button id="newTest" class="primary">+ Tạo bài kiểm tra</button></div>
-    <div class="table-wrap"><table><thead><tr><th>Tên bài</th><th>Lớp</th><th>Thời gian</th><th>Lượt làm</th><th>Trạng thái</th><th></th></tr></thead>
-    <tbody>${data.map(x=>`<tr><td>${esc(x.title)}</td><td>${esc(x.classes?.name||"—")}</td><td>${x.duration_minutes} phút</td><td>${x.max_attempts}</td><td>${statusBadge(x.status)}</td><td><a class="btn secondary sm" href="#/test/${x.id}">Chi tiết</a></td></tr>`).join("")||`<tr><td colspan="6" class="empty">Chưa có bài kiểm tra</td></tr>`}</tbody></table></div>
+    <div class="row between wrap"><div><h1>Bài kiểm tra</h1><p class="muted">Lượt đã làm là số lượt thật trong hệ thống; giới hạn/SV là số lần tối đa mỗi sinh viên được phép làm.</p></div><button id="newTest" class="primary">+ Tạo bài kiểm tra</button></div>
+    ${renderStaffTestsTable({tests:data,counts,esc,statusBadge})}
   </section>`;
   document.querySelector("#newTest").onclick=openNewTest;
 }
@@ -1183,14 +1194,19 @@ async function hydrateAuthoringRichContent(questions,groups){
     ...questions.flatMap(q=>[q.content,...(q.choices||[]).map(c=>c.content)]),
     ...groups.flatMap(g=>(g.stimuli||[]).map(s=>s.content))
   ];
-  const paths=values.flatMap(embeddedImagePaths);
+  const directPaths=[
+    ...questions.flatMap(q=>[q.storage_path,...(q.choices||[]).map(c=>c.storage_path)]),
+    ...groups.flatMap(g=>(g.stimuli||[]).map(s=>s.storage_path))
+  ].filter(p=>p && !String(p).startsWith("static:"));
+  const paths=[...new Set([...values.flatMap(embeddedImagePaths),...directPaths])];
   if(!paths.length) return;
   const urls=await signedUrlMap(paths);
   for(const q of questions){
     q.content=hydrateEmbeddedImages(q.content,urls);
-    for(const c of q.choices||[]) c.content=hydrateEmbeddedImages(c.content,urls);
+    if(q.storage_path) q.url=String(q.storage_path).startsWith("static:")?q.storage_path.slice(7):urls[q.storage_path];
+    for(const c of q.choices||[]){ c.content=hydrateEmbeddedImages(c.content,urls); if(c.storage_path) c.url=String(c.storage_path).startsWith("static:")?c.storage_path.slice(7):urls[c.storage_path]; }
   }
-  for(const g of groups) for(const s of g.stimuli||[]) s.content=hydrateEmbeddedImages(s.content,urls);
+  for(const g of groups) for(const st of g.stimuli||[]){ st.content=hydrateEmbeddedImages(st.content,urls); if(st.storage_path) st.url=String(st.storage_path).startsWith("static:")?st.storage_path.slice(7):urls[st.storage_path]; }
 }
 function bindTestHeaderActions(id,t,staticCount=0){
   document.querySelector("#publishBtn")?.addEventListener("click",async()=>{
@@ -1356,137 +1372,6 @@ function bindAuthoringActions(id,parts,qs,groups,draft,locked=false){
     }
   });
 }
-async function renderPracticeTab(testId){
-  const root=document.querySelector("#practiceRoot");
-  if(!root) return;
-  const {data,error}=await sb.rpc("staff_list_practice_attempts",{p_test_id:testId});
-  if(error) return root.innerHTML=`<div class="warning-box">${esc(error.message)}</div>`;
-  const rows=data||[];
-  const open=rows.find(x=>x.status==="in_progress");
-  root.innerHTML=`<div class="row between wrap"><div><h2>Làm thử như sinh viên</h2><p class="muted">Mỗi đáp án được lưu vào khu vực riêng của giảng viên, không xuất hiện trong LIVE hoặc kết quả lớp.</p></div><a class="btn primary" href="#/preview/${testId}">${open?"Tiếp tục lượt đang làm":"Bắt đầu lượt làm thử"}</a></div>
-  <div class="table-wrap"><table><thead><tr><th>Lượt</th><th>Trạng thái</th><th>Đã trả lời</th><th>Số câu đúng</th><th>Bắt đầu</th><th>Kết thúc</th><th></th></tr></thead>
-  <tbody>${rows.map((x,i)=>`<tr><td>${rows.length-i}</td><td>${x.status==="in_progress"?'<span class="status warn">Đang làm</span>':x.status==="expired"?'<span class="status off">Hết giờ</span>':'<span class="status ok">Đã nộp</span>'}</td><td>${x.answered_count||0}/${x.total_questions||0}</td><td>${x.correct_count==null?"—":`${x.correct_count}/${x.total_questions}`}</td><td>${fmt(x.started_at)}</td><td>${fmt(x.submitted_at)}</td><td>${x.status==="in_progress"?`<a class="btn primary sm" href="#/preview/${testId}">Tiếp tục</a>`:`<a class="btn secondary sm" href="#/practice-result/${testId}/${x.id}">Xem</a>`}</td></tr>`).join("")||'<tr><td colspan="7" class="empty">Chưa có lượt làm thử.</td></tr>'}</tbody></table></div>`;
-}
-async function renderLiveTab(testId){
-  const load=async()=>{
-    const {data,error}=await sb.rpc("staff_get_test_live",{p_test_id:testId});
-    if(error) return document.querySelector("#liveRoot").innerHTML=`<div class="warning-box">${esc(error.message)}</div>`;
-    const rows=data.rows||[];
-    const counts={
-      roster:Number(data.roster_count??rows.length),
-      attempts:Number(data.attempt_count??rows.filter(r=>r.attempt_id).length),
-      in:rows.filter(r=>r.status==="in_progress").length,
-      done:rows.filter(r=>["submitted","auto_submitted"].includes(r.status)).length,
-      none:rows.filter(r=>!r.attempt_id).length,
-      viol:rows.filter(r=>(r.violation_count||0)>0).length
-    };
-    const root=document.querySelector("#liveRoot"); if(!root) return;
-    root.innerHTML=`<div class="row between wrap"><div><h2>LIVE</h2><p class="muted">Tự cập nhật khi sinh viên làm bài.</p></div><button class="secondary" id="liveExcel">↓ Excel hiện tại</button></div>
-    <div class="live-kpis">${[["Sĩ số",counts.roster],["Lượt thi",counts.attempts],["Đang làm",counts.in],["Đã nộp",counts.done],["Chưa vào",counts.none],["Có vi phạm",counts.viol]].map(([a,b])=>`<div><span>${a}</span><b>${b}</b></div>`).join("")}</div>
-    <div class="row wrap live-filters">${["all","in_progress","done","none","viol"].map(k=>`<button class="${(testWorkspace?.liveFilter||"all")===k?"primary":"secondary"} sm live-filter" data-filter="${k}">${({all:"Tất cả",in_progress:"Đang làm",done:"Đã nộp",none:"Chưa làm",viol:"Có vi phạm"})[k]}</button>`).join("")}</div>
-    <div class="table-wrap"><table id="liveTable"><thead><tr><th>Họ tên</th><th>MSSV</th><th>Lượt</th><th>Trạng thái</th><th>Tiến độ</th><th>Bắt đầu</th><th>Còn lại</th><th>Vi phạm</th><th>Điểm</th></tr></thead>
-    <tbody>${rows.map(r=>liveRow(r)).join("")||`<tr><td colspan="9" class="empty">Lớp chưa có sinh viên.</td></tr>`}</tbody></table></div>`;
-    root.dataset.rows=JSON.stringify(rows);
-    document.querySelector("#liveExcel").onclick=()=>exportTestExcel(testId);
-    const applyLiveFilter=(f)=>{
-      if(testWorkspace?.id===testId) testWorkspace.liveFilter=f;
-      document.querySelectorAll(".live-filter").forEach(x=>x.className=`${x.dataset.filter===f?"primary":"secondary"} sm live-filter`);
-      document.querySelector("#liveTable tbody").innerHTML=rows.filter(r=>
-        f==="all" || (f==="in_progress"&&r.status==="in_progress") || (f==="done"&&["submitted","auto_submitted"].includes(r.status)) || (f==="none"&&!r.attempt_id) || (f==="viol"&&(r.violation_count||0)>0)
-      ).map(liveRow).join("")||`<tr><td colspan="9" class="empty">Không có dữ liệu.</td></tr>`;
-    };
-    document.querySelectorAll(".live-filter").forEach(btn=>btn.onclick=()=>applyLiveFilter(btn.dataset.filter));
-    applyLiveFilter(testWorkspace?.liveFilter||"all");
-  };
-  await load();
-  let pending=null;
-  const refresh=()=>{clearTimeout(pending);pending=setTimeout(load,450)};
-  liveChannel=sb.channel(`test-live-${testId}`)
-    .on("postgres_changes",{event:"*",schema:"public",table:"attempts",filter:`test_id=eq.${testId}`},refresh)
-    .on("postgres_changes",{event:"*",schema:"public",table:"answers"},refresh)
-    .on("postgres_changes",{event:"*",schema:"public",table:"anti_cheat_events"},refresh)
-    .subscribe();
-}
-function liveRow(r){
-  let remain="—";
-  if(r.status==="in_progress"&&r.expires_at){
-    const sec=Math.max(0,Math.floor((new Date(r.expires_at)-Date.now())/1000));
-    remain=`${Math.floor(sec/60)}:${String(sec%60).padStart(2,"0")}`;
-  }
-  const st=!r.attempt_id?"Chưa làm":r.status==="in_progress"?"Đang làm":r.status==="auto_submitted"?"Tự nộp":"Đã nộp";
-  return `<tr data-status="${esc(r.status||"none")}"><td>${(r.attempt_id&&r.status!=="in_progress")?`<a href="#/result/${r.attempt_id}">${esc(r.full_name)}</a>`:esc(r.full_name)}</td><td>${esc(r.student_code||"—")}</td><td>${r.attempt_no||"—"}</td><td>${st}</td><td>${r.answered_count||0}</td><td>${fmt(r.started_at)}</td><td>${remain}</td><td>${r.violation_count||0}</td><td>${r.correct_count==null?"—":r.correct_count}</td></tr>`;
-}
-function submissionActions(r){
-  if(!r.attempt_id) return "";
-  const viewBtn=r.status==="in_progress"?"":`<a class="btn secondary sm" href="#/result/${r.attempt_id}">Xem</a>`;
-  const delBtn=`<button class="danger sm delete-attempt" data-id="${r.attempt_id}" data-name="${esc(r.full_name)}">Xóa</button>`;
-  if(r.status==="reset") return `<div class="row wrap">${viewBtn}<span class="status off">Đã reset</span>${delBtn}</div>`;
-  return `<div class="row wrap">${viewBtn}<button class="ghost sm reset-attempt" data-id="${r.attempt_id}" data-name="${esc(r.full_name)}">Reset lượt</button>${delBtn}</div>`;
-}
-async function renderSubmissionsTab(testId){
-  const {data,error}=await sb.rpc("staff_get_test_export",{p_test_id:testId});
-  const root=document.querySelector("#submissionsRoot");
-  if(!root) return;
-  if(error) return root.innerHTML=`<div class="warning-box">${esc(error.message)}</div>`;
-  const rows=data.students||[];
-  root.innerHTML=`<div class="row between wrap"><div><h2>Bài làm sinh viên</h2><p class="muted">Xem từng lượt, reset để cho làm lại hoặc xóa lượt. Mọi thao tác quản trị đều được ghi log.</p></div><button class="primary" id="subExcel">↓ Tải Excel</button></div>
-  <div class="table-wrap"><table><thead><tr><th>Họ tên</th><th>MSSV</th><th>Lần</th><th>Trạng thái</th><th>Bắt đầu</th><th>Nộp</th><th>Đúng</th><th>Vi phạm</th><th>Thao tác</th></tr></thead>
-  <tbody>${rows.map(r=>`<tr><td>${esc(r.full_name)}</td><td>${esc(r.student_code||"—")}</td><td>${r.attempt_no||"—"}</td><td>${r.attempt_id?statusBadge(r.status):'<span class="status off">Chưa làm</span>'}</td><td>${fmt(r.started_at)}</td><td>${fmt(r.submitted_at)}</td><td>${r.correct_count??"—"}</td><td>${r.violation_count||0}</td><td>${submissionActions(r)}</td></tr>`).join("")||'<tr><td colspan="9" class="empty">Chưa có lượt làm nào.</td></tr>'}</tbody></table></div>`;
-  document.querySelector("#subExcel").onclick=()=>exportTestExcel(testId);
-  document.querySelectorAll(".reset-attempt").forEach(b=>b.onclick=()=>confirmAttemptAction("reset",testId,b.dataset.id,b.dataset.name));
-  document.querySelectorAll(".delete-attempt").forEach(b=>b.onclick=()=>confirmAttemptAction("delete",testId,b.dataset.id,b.dataset.name));
-}
-async function confirmAttemptAction(action,testId,attemptId,name){
-  const isDelete=action==="delete";
-  modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal"><h2>${isDelete?"Xóa bài làm":"Reset lượt làm"}?</h2><p><b>${esc(name||"Sinh viên")}</b></p><div class="warning-box">${isDelete?"Bài làm, câu trả lời và sự kiện chống gian lận của lượt này sẽ bị xóa. Sinh viên có thể làm lại nếu còn lượt.":"Lượt cũ vẫn được giữ để đối soát nhưng chuyển trạng thái Reset; sinh viên được phép bắt đầu lượt mới."}</div><div class="row between"><button class="secondary" data-close>Hủy</button><button class="${isDelete?"danger":"primary"}" id="doAttemptAction">${isDelete?"Xóa bài làm":"Reset lượt"}</button></div></div></div>`;
-  modalRoot.querySelector("[data-close]").onclick=closeModal;
-  modalRoot.querySelector("#doAttemptAction").onclick=async()=>{
-    const fn=isDelete?"staff_delete_attempt":"staff_reset_attempt";
-    const {data:result,error}=await sb.rpc(fn,{p_attempt_id:attemptId}); if(error) return toast(error.message,6000);
-    closeModal();
-    if(isDelete){
-      toast(result?.content_unlocked?"Đã xóa bài làm · đề đã được mở khóa":"Đã xóa bài làm");
-      await refreshCurrentTest(testId,"submissions");
-      return;
-    }
-    toast("Đã reset lượt làm");
-    if(testWorkspace?.id===testId){testWorkspace.loaded.submissions=false;testWorkspace.loaded.live=false;}
-    clearLiveChannel();
-    await renderSubmissionsTab(testId);
-  };
-}
-async function exportTestExcel(testId){
-  toast("Đang tạo Excel…");
-  const {data,error}=await sb.rpc("staff_get_test_export",{p_test_id:testId});
-  if(error) return toast(error.message,6000);
-  const students=data.students||[];
-  const summary=students.map((s,i)=>({
-    STT:i+1,"Họ tên":s.full_name,MSSV:s.student_code||"","Lần làm":s.attempt_no||"","Trạng thái":s.status||"Chưa làm",
-    "Bắt đầu":s.started_at?new Date(s.started_at).toLocaleString("vi-VN"):"",
-    "Nộp bài":s.submitted_at?new Date(s.submitted_at).toLocaleString("vi-VN"):"",
-    "Số câu đúng":s.correct_count??"","Điểm":s.score??"","Vi phạm":s.violation_count||0,"Lý do nộp":s.submission_reason||""
-  }));
-  const detail=[];
-  for(const s of students) for(const a of s.answers||[]) detail.push({
-    "Họ tên":s.full_name,MSSV:s.student_code||"","Lần làm":s.attempt_no||"","Câu":a.number,"Đã chọn":a.selected||"","Đáp án":a.correct||"","Đúng/Sai":a.is_correct?"Đúng":"Sai"
-  });
-  const violations=[];
-  for(const s of students) for(const v of s.violations||[]) violations.push({
-    "Họ tên":s.full_name,MSSV:s.student_code||"","Lần làm":s.attempt_no||"","Sự kiện":v.event_type,"Lần":v.violation_number,"Thời điểm":new Date(v.occurred_at).toLocaleString("vi-VN")
-  });
-  const roster=(data.roster||[]).map((r,i)=>({STT:i+1,"Họ tên":r.full_name,MSSV:r.student_code||"",Email:r.email||"","Trạng thái":r.is_active?"Hoạt động":"Khóa"}));
-  const resetHistory=(data.reset_history||[]).map(r=>({"Họ tên":r.full_name,MSSV:r.student_code||"","Lần làm":r.attempt_no||"","Trạng thái":r.status,"Bắt đầu":r.started_at?new Date(r.started_at).toLocaleString("vi-VN"):"","Kết thúc":r.submitted_at?new Date(r.submitted_at).toLocaleString("vi-VN"):"","Lý do":r.submission_reason||""}));
-  const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(summary),"Tong_hop");
-  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(detail),"Chi_tiet");
-  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(violations),"Vi_pham");
-  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(roster),"Danh_sach_lop");
-  if(resetHistory.length) XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(resetHistory),"Lich_su_reset");
-  const safe=(data.test?.title||"ket-qua").replace(/[\\/:*?"<>|]+/g,"-");
-  XLSX.writeFile(wb,`${safe}.xlsx`);
-  toast("Đã tạo file Excel");
-}
-
 async function confirmDeleteAuthorItem(kind,testId,itemId,label){
   const meta={question:["câu hỏi","staff_delete_question"],group:["nhóm nội dung","staff_delete_stimulus_group"],stimulus:["nội dung chung","staff_delete_stimulus"]}[kind];
   if(!meta) return;
@@ -2129,7 +2014,7 @@ async function renderResult(attemptId,staffView=false){
       : '<div class="empty">Chưa có dữ liệu xem lại bài làm. Hãy áp dụng migration Supabase V1.10.</div>';
   view.innerHTML=`${staffView?staffNav("tests"):""}<section class="card">
     <span class="eyebrow">Kết quả${data.attempt_no?` · Lượt ${data.attempt_no}`:""}</span><h1>Hoàn thành bài thi</h1>
-    <div class="row score-row"><div><div class="big-score">${data.correct_count}/${total}</div><div class="muted">${pct}%</div></div><div>${statusBadge(data.status)}</div></div>
+    <div class="row score-row"><div><div class="big-score">${formatScore10(data.correct_count,total)}</div><div class="muted">${data.correct_count}/${total} câu đúng · ${pct}%</div></div><div>${statusBadge(data.status)}</div></div>
     <p class="muted">Nộp lúc ${fmt(data.submitted_at)}${data.violation_count!=null?` · Vi phạm: ${data.violation_count}/3`:""}</p>${autoReason}${staffView?'<button class="btn primary" id="backFromResult">← Quay lại bài kiểm tra</button>':'<a class="btn primary" href="#/student">Về danh sách bài</a>'}
   </section>
   <section class="card result-list"><div class="row between wrap"><div><h2>Xem lại bài làm</h2><p class="muted">${showAnswers?"Đáp án đúng được hiển thị theo cài đặt của bài kiểm tra.":"Bạn được xem lại câu hỏi và phương án đã chọn; đáp án đúng chưa được công bố."}</p></div></div>${review}</section>`;

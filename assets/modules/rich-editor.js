@@ -97,7 +97,7 @@ export function richEditorField(name,label,value="",{compact=false}={}){
       <button type="button" data-action="image">Ảnh</button>
       <button type="button" data-command="removeFormat">Xóa định dạng</button>
     </div>
-    <div class="rich-editor" contenteditable="true" role="textbox" aria-multiline="true">${safe}</div>
+    <div class="rich-editor" contenteditable="true" role="textbox" aria-multiline="true" spellcheck="true" lang="en">${safe}</div>
     <input type="file" class="rich-image-input" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
     <textarea name="${esc(name)}" hidden>${esc(sanitizeRichHtml(safe,{storage:true}))}</textarea>
   </div>`;

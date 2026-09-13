@@ -1,0 +1,13 @@
+/* Exam layout and anti-cheat overlay */
+.exam-layout{align-items:start}
+.exam-main{align-self:start;align-content:start;grid-auto-rows:max-content}
+.exam-side{align-self:start}
+.exam-toolbar{align-items:center}
+.anti-cheat-overlay{background:rgba(15,23,42,.58);-webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px)}
+.anti-cheat-panel{width:min(620px,100%)}
+.anti-cheat-count-wrap{display:grid;justify-items:center}
+.anti-cheat-count-wrap[hidden]{display:none!important}
+.anti-cheat-count-unit{font-weight:800;opacity:.88;margin-top:2px}
+.anti-cheat-return-btn{width:100%;margin-top:18px;min-height:48px;font-size:1rem}
+.anti-cheat-return-btn[hidden]{display:none!important}
+@media(max-width:900px){.exam-main{grid-auto-rows:max-content}}
