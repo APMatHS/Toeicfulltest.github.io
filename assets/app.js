@@ -5,6 +5,7 @@ import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js";
 import { esc,fmt,route,go,roleLabel,statusBadge,readJSON,writeJSON,debounce } from "./modules/utils.js";
 import { createMediaService } from "./modules/media.js";
 import { bindAuthoringFilter,renderAuthoringMarkup } from "./modules/authoring-view.js";
+import { createAntiCheatController } from "./modules/anti-cheat.js";
 import {
   bindRichEditors,embeddedImagePaths,hydrateEmbeddedImages,
   renderRichText,richEditorField,sanitizeRichHtml
@@ -23,10 +24,6 @@ let session = null;
 let profile = null;
 let examState = null;
 let timerId = null;
-let antiCheatBound = false;
-let lastViolationAt = 0;
-let fullscreenWasEntered = false;
-let suppressFullscreenViolation = false;
 let liveChannel = null;
 let authorDraftTimer = null;
 let answerFlushBusy = false;
@@ -35,6 +32,25 @@ const staffPageCache = new Map();
 let activeStaffPageKey = null;
 const staffDataCache={users:null,classes:null,tests:null,updatedAt:0};
 let staffPrefetchPromise=null;
+
+const antiCheat=createAntiCheatController({
+  getExamState:()=>examState,
+  getRoute:route,
+  registerViolation:({attemptId,eventType,details,clientEventId})=>sb.rpc("register_violation_v2",{
+    p_attempt_id:attemptId,p_event_type:eventType,p_details:details,p_client_event_id:clientEventId
+  }),
+  onCountChange:count=>{
+    if(examState?.payload?.attempt) examState.payload.attempt.violation_count=count;
+    const el=document.querySelector("#antiCheatStatus");
+    if(el) el.textContent=`Vi phạm: ${count}/3 · rời màn hình >30 giây mới tính`;
+  },
+  onWarning:data=>alert(`Cảnh báo: lần ${data.violation_count}/3 rời màn hình quá 30 giây. Lần thứ 3 sẽ tự động nộp bài.`),
+  onSubmitted:()=>{
+    const id=examState?.attemptId;
+    alert("Hệ thống đã tự động nộp bài vì đã có 3 lần rời màn hình quá 30 giây.");
+    if(id) go(`/result/${id}`);
+  }
+});
 
 function toast(msg, ms=3600){
   toastEl.textContent = msg;
@@ -171,7 +187,8 @@ async function boot(){
   });
 
   addEventListener("hashchange", render);
-  addEventListener("popstate", render);
+  window.addEventListener("online",()=>{setSaveStatus("Có mạng – đang đồng bộ…","pending");flushAnswerQueue()});
+  window.addEventListener("offline",()=>setSaveStatus("Mất mạng – đáp án sẽ lưu tạm","offline"));
   render();
 }
 async function loadProfile(){
@@ -806,7 +823,7 @@ async function openNewTest(){
     f.duration_minutes=Number(f.duration_minutes);
     f.max_attempts=Number(f.max_attempts);
     ["opens_at","closes_at"].forEach(k=>f[k]=f[k]?new Date(f[k]).toISOString():null);
-    Object.assign(f,{status:"draft",show_answers_after_submit:fd.has("show_answers_after_submit"),allowed_violations:1});
+    Object.assign(f,{status:"draft",show_answers_after_submit:fd.has("show_answers_after_submit"),allowed_violations:2});
     const btn=e.submitter || e.target.querySelector("button[type='submit'],button:not([type])");
     btn.disabled=true;btn.textContent="Đang tạo…";
     try{
@@ -943,7 +960,7 @@ async function renderTestDetail(id,tab="overview"){
         <div><div class="muted">Mở lúc</div><b>${fmt(t.opens_at)}</b></div>
         <div><div class="muted">Đóng lúc</div><b>${fmt(t.closes_at)}</b></div>
         <div><div class="muted">Chống gian lận</div><b>${esc(t.anti_cheat_mode)}</b></div>
-        <div><div class="muted">Số vi phạm cho phép</div><b>${t.allowed_violations}</b></div>
+        <div><div class="muted">Ngưỡng tự nộp</div><b>${t.anti_cheat_mode==="off"?"Tắt":t.anti_cheat_mode==="strict"?"Lần đầu rời >30 giây":"Lần thứ 3 rời >30 giây"}</b></div>
         <div><div class="muted">Xem đáp án sau nộp</div><b>${t.show_answers_after_submit?"Có":"Không"}</b></div>
       </div>
     </section>
@@ -1037,7 +1054,7 @@ async function openEditTest(t){
       <label>Thời gian (phút)<input type="number" name="duration_minutes" value="${t.duration_minutes}" min="1" ${locked?"disabled":""}>${locked?'<span class="hint">🔒 Deadline của lượt đã bắt đầu phải giữ nhất quán.</span>':''}</label>
       <label>Số lần làm<input type="number" name="max_attempts" value="${t.max_attempts}" min="1"></label>
       <label>Chống gian lận<select name="anti_cheat_mode"><option value="warn_then_submit" ${t.anti_cheat_mode==="warn_then_submit"?"selected":""}>Cảnh báo rồi tự nộp</option><option value="strict" ${t.anti_cheat_mode==="strict"?"selected":""}>Nghiêm ngặt</option><option value="off" ${t.anti_cheat_mode==="off"?"selected":""}>Tắt</option></select></label>
-      <label>Số vi phạm cho phép<input type="number" name="allowed_violations" value="${t.allowed_violations??1}" min="0"></label>
+      <label>Ngưỡng chống gian lận<input value="${t.anti_cheat_mode==="off"?"Tắt":t.anti_cheat_mode==="strict"?"Lần đầu >30 giây":"Lần thứ 3 >30 giây"}" disabled></label>
       <label>Mở lúc<input type="datetime-local" name="opens_at" value="${toLocalInput(t.opens_at)}"></label>
       <label>Đóng lúc<input type="datetime-local" name="closes_at" value="${toLocalInput(t.closes_at)}"></label>
       <label class="span-2">Mô tả<textarea name="description" rows="3">${esc(t.description||"")}</textarea></label>
@@ -1051,7 +1068,7 @@ async function openEditTest(t){
     e.preventDefault();
     const fd=new FormData(e.target),f=Object.fromEntries(fd); f.id=t.id;
     if(!locked){f.class_id=f.class_id||"";f.duration_minutes=+f.duration_minutes;}
-    f.max_attempts=+f.max_attempts; f.allowed_violations=+f.allowed_violations;
+    f.max_attempts=+f.max_attempts;
     f.show_answers_after_submit=fd.has("show_answers_after_submit");
     ["opens_at","closes_at"].forEach(k=>f[k]=f[k]?new Date(f[k]).toISOString():"");
     const btn=e.submitter || e.target.querySelector("button[type='submit'],button:not([type])");btn.disabled=true;btn.textContent="Đang lưu…";
@@ -1545,7 +1562,7 @@ function confirmStart(testId,maxAttempts=1,used=0){
   const nextNo=used+1;
   modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal">
     <h2>Trước khi bắt đầu lượt ${nextNo}</h2>
-    <div class="warning-box"><b>Quy định chống gian lận</b><br>Rời tab/màn hình hoặc thoát toàn màn hình sẽ được ghi nhận theo cài đặt của bài kiểm tra.</div>
+    <div class="warning-box"><b>Quy định chống gian lận</b><br>Rời tab/cửa sổ trên 30 giây mới tính 1 vi phạm. Hai lần đầu cảnh báo; lần thứ 3 hệ thống tự động nộp bài.</div>
     <p>Bài cho phép tối đa <b>${maxAttempts} lượt</b>. Bạn đã dùng <b>${used}</b> lượt. Đồng hồ bắt đầu ngay khi nhấn Bắt đầu.</p>
     <div class="row between"><button class="secondary" data-close>Hủy</button><button class="primary" id="confirmStart">Bắt đầu lượt ${nextNo}</button></div>
   </div></div>`;
@@ -1555,10 +1572,7 @@ function confirmStart(testId,maxAttempts=1,used=0){
     const {data,error}=await sb.rpc("start_attempt",{p_test_id:testId});
     if(error){btn.disabled=false;btn.textContent=`Bắt đầu lượt ${nextNo}`;return toast(error.message,6000);}
     closeModal();
-    try{
-      await document.documentElement.requestFullscreen?.();
-      fullscreenWasEntered=!!document.fullscreenElement;
-    }catch{ fullscreenWasEntered=false; }
+    try{ await document.documentElement.requestFullscreen?.(); }catch{}
     const attemptId=data?.attempt_id || data?.id || data?.attempt?.id;
     if(!attemptId) return toast("Không nhận được mã lượt làm.");
     go(`/exam/${attemptId}`);
@@ -1575,7 +1589,7 @@ async function renderExam(attemptId){
   examState={attemptId,payload:data,current:Math.min(ui.current||0,(data.questions?.length||1)-1),saveStatus:"Đã lưu"};
   mergeQueuedAnswers(attemptId,data.questions||[]);
   await hydrateMedia(data.questions||[]);
-  drawExam(); bindAntiCheat(); flushAnswerQueue();
+  drawExam(); antiCheat.bind(); flushAnswerQueue();
 }
 function buildPracticeQuestions(authoring,answers=[]){
   const groupMap=new Map((authoring?.stimulus_groups||[]).map(g=>[g.id,g]));
@@ -1681,7 +1695,7 @@ function drawExam(){
   const {payload,current}=examState;
   const q=payload.questions[current], a=payload.attempt;
   if(!q) return view.innerHTML=`<div class="card">Không có câu hỏi.</div>`;
-  const antiText=examState.preview?"Chế độ giảng viên làm thử · không tạo lượt làm":a.anti_cheat_mode==="off"?"Chống gian lận: Tắt":a.anti_cheat_mode==="strict"?`Vi phạm: ${a.violation_count||0} · chế độ nghiêm ngặt`:`Vi phạm: ${a.violation_count||0}/${a.allowed_violations??1} mức cảnh báo`;
+  const antiText=examState.preview?"Giảng viên làm thử · lưu lịch sử riêng, không tính vào kết quả sinh viên":a.anti_cheat_mode==="off"?"Chống gian lận: Tắt":a.anti_cheat_mode==="strict"?`Vi phạm: ${a.violation_count||0}/1 · rời màn hình >30 giây mới tính`:`Vi phạm: ${a.violation_count||0}/3 · rời màn hình >30 giây mới tính`;
   saveAttemptUi();
   view.innerHTML=`${examState.preview?`<section class="card preview-banner"><div class="row between wrap"><div><b>Chế độ làm thử</b><div class="muted">Giao diện như sinh viên · tự lưu trong lịch sử riêng của giảng viên</div></div><a class="btn secondary" href="#/test/${examState.testId}/practice">← Thoát làm thử</a></div></section>`:""}<section class="exam-layout"><div class="exam-main">
     <div class="card"><div class="row between wrap"><div><b>Part ${q.part}</b><div class="muted">Câu ${q.number} · ${current+1}/${payload.questions.length}</div></div><div class="exam-status"><span id="saveStatus" class="save-status">${esc(examState.saveStatus||"Đã lưu")}</span><div id="timer" class="timer"></div></div></div></div>
@@ -1701,7 +1715,7 @@ function drawExam(){
   </div>
   <aside class="exam-side"><div class="card sticky"><div class="row between"><b>Câu hỏi</b><span class="muted">${payload.questions.filter(x=>x.selected).length}/${payload.questions.length}</span></div>
   <div class="palette">${payload.questions.map((x,i)=>`<button class="qbtn ${x.selected?"done":""} ${x.marked?"review":""} ${i===current?"current":""}" data-i="${i}">${x.number}</button>`).join("")}</div>
-  <button class="${examState.preview?"primary":"danger"} full" id="submitBtn">${examState.preview?"Kết thúc làm thử":"Nộp bài"}</button><p class="muted small">${esc(antiText)}</p></div></aside></section>`;
+  <button class="${examState.preview?"primary":"danger"} full" id="submitBtn">${examState.preview?"Kết thúc làm thử":"Nộp bài"}</button><p id="antiCheatStatus" class="muted small">${esc(antiText)}</p></div></aside></section>`;
 
   document.querySelectorAll(".qbtn").forEach(b=>b.onclick=()=>{examState.current=+b.dataset.i;drawExam()});
   document.querySelector("#prevBtn").onclick=()=>{examState.current--;drawExam()};
@@ -1725,19 +1739,27 @@ async function saveCurrent(choice,marked=document.querySelector("#markReview")?.
     if(choice) q.selected=choice;
     drawPaletteOnly();
     setSaveStatus("Đang lưu…","pending");
-    const savePromise=sb.rpc("staff_save_practice_answer",{
-      p_attempt_id:examState.attemptId,p_question_id:q.id,p_choice:choice||null,p_marked:marked
+    const state=examState;
+    const previous=state.pendingSave||Promise.resolve();
+    const saveTask=previous.then(()=>sb.rpc("staff_save_practice_answer",{
+      p_attempt_id:state.attemptId,p_question_id:q.id,p_choice:choice||null,p_marked:marked
+    })).then(result=>{
+      if(result.error) throw result.error;
+      return result;
     });
-    examState.pendingSave=savePromise;
-    const {error}=await savePromise;
-    if(examState?.pendingSave===savePromise) examState.pendingSave=null;
-    if(error) return setSaveStatus(`Chưa lưu: ${error.message}`,"offline");
-    setSaveStatus("Đã lưu","saved");
+    const settled=saveTask.then(result=>({result}),error=>({error}));
+    state.pendingSave=settled;
+    const outcome=await settled;
+    if(outcome.error){
+      if(examState===state) setSaveStatus(`Chưa lưu: ${outcome.error.message}`,"offline");
+    }else if(examState===state){
+      setSaveStatus("Đã lưu","saved");
+    }
+    if(state.pendingSave===settled) state.pendingSave=null;
     return;
   }
-  if(!choice){ setSaveStatus("Đã lưu tạm đánh dấu","local"); return; }
-  q.selected=choice;
-  const ev={client_event_id:crypto.randomUUID(),question_id:q.id,choice,marked,created_at:Date.now()};
+  if(choice) q.selected=choice;
+  const ev={client_event_id:crypto.randomUUID(),question_id:q.id,choice:choice||null,marked,created_at:Date.now()};
   enqueueAnswer(examState.attemptId,ev);
   setSaveStatus(navigator.onLine?"Đang lưu…":"Mất mạng – đã lưu tạm",navigator.onLine?"pending":"offline");
   drawPaletteOnly();
@@ -1804,9 +1826,8 @@ function confirmSubmit(){
       await flushAnswerQueue();
       if(readJSON(attemptQueueKey(examState.attemptId),[]).length) return toast("Còn đáp án chưa đồng bộ. Hãy chờ mạng ổn định trước khi nộp.",6000);
     }
-    suppressFullscreenViolation=true;
     const {error}=await sb.rpc("submit_attempt",{p_attempt_id:examState.attemptId});
-    if(error){suppressFullscreenViolation=false;return toast(error.message);}
+    if(error) return toast(error.message);
     localStorage.removeItem(attemptQueueKey(examState.attemptId));
     localStorage.removeItem(attemptUiKey(examState.attemptId));
     closeModal(); go(`/result/${examState.attemptId}`);
@@ -1821,6 +1842,7 @@ async function renderPreviewResult(status="submitted"){
   const {data,error}=await sb.rpc("staff_finish_practice_attempt",{p_attempt_id:attemptId,p_status:status});
   if(error) return toast(error.message,6000);
   localStorage.removeItem(attemptUiKey(attemptId));
+  history.replaceState({practiceResult:true},"",`#/practice-result/${testId}/${attemptId}`);
   renderStoredPracticeResult(testId,attemptId,questions,{...data,status});
 }
 function renderStoredPracticeResult(testId,attemptId,questions,attempt={}){
@@ -1834,36 +1856,8 @@ function renderStoredPracticeResult(testId,attemptId,questions,attempt={}){
   </section>
   <section class="card result-list"><h2>Đối chiếu đáp án</h2>${questions.map(q=>`<div class="result-row"><b>Câu ${q.number}</b> · Đã chọn: <b>${esc(q.selected||"—")}</b> · Đáp án: <b>${esc(q.correct_choice_key||"—")}</b> · <span class="${q.selected===q.correct_choice_key?"correct":"wrong"}">${q.selected===q.correct_choice_key?"Đúng":"Sai"}</span></div>`).join("")}</section>`;
   examState=null;
-  document.querySelector("#retryPreview")?.addEventListener("click",()=>renderStaffPreview(testId));
+  document.querySelector("#retryPreview")?.addEventListener("click",()=>go(`/preview/${testId}`));
 }
-function bindAntiCheat(){
-  if(antiCheatBound) return;
-  antiCheatBound=true;
-  const fire=async type=>{
-    if(!examState||route()!==`/exam/${examState.attemptId}`) return;
-    const now=Date.now(); if(now-lastViolationAt<1800) return;
-    lastViolationAt=now;
-    const eventId=crypto.randomUUID();
-    const {data,error}=await sb.rpc("register_violation_v2",{
-      p_attempt_id:examState.attemptId,p_event_type:type,p_details:{ua:navigator.userAgent},p_client_event_id:eventId
-    });
-    if(error) return console.error(error);
-    if(data?.duplicate) return;
-    examState.payload.attempt.violation_count=data.violation_count;
-    if(data.submitted){ alert("Hệ thống đã tự động nộp bài do vi phạm quy định của bài kiểm tra."); go(`/result/${examState.attemptId}`); }
-    else if(data.warning) alert(`Cảnh báo: hệ thống đã ghi nhận ${data.violation_count} vi phạm.`);
-  };
-  document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="hidden") fire("tab_hidden"); });
-  window.addEventListener("blur",()=>{ if(document.visibilityState==="visible") fire("window_blur"); });
-  document.addEventListener("fullscreenchange",()=>{
-    if(suppressFullscreenViolation){suppressFullscreenViolation=false;return;}
-    if(fullscreenWasEntered&&!document.fullscreenElement&&examState&&route().startsWith("/exam/")) fire("fullscreen_exit");
-    if(document.fullscreenElement) fullscreenWasEntered=true;
-  });
-  window.addEventListener("online",()=>{setSaveStatus("Có mạng – đang đồng bộ…","pending");flushAnswerQueue()});
-  window.addEventListener("offline",()=>setSaveStatus("Mất mạng – đáp án sẽ lưu tạm","offline"));
-}
-
 async function renderResult(attemptId,staffView=false){
   showLoading("Đang tải kết quả...");
   const {data,error}=await sb.rpc("get_attempt_result",{p_attempt_id:attemptId});
@@ -1875,7 +1869,6 @@ async function renderResult(attemptId,staffView=false){
     return view.innerHTML=`<div class="card">${esc(error.message)}</div>`;
   }
   examState=null;
-  suppressFullscreenViolation=true;
   try{ if(document.fullscreenElement) await document.exitFullscreen(); }catch{}
   const ans=data.answers||[],total=data.total_questions||ans.length||100;
   const pct=total?Math.round((Number(data.correct_count||0)/total)*1000)/10:0;

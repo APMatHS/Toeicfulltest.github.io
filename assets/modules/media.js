@@ -7,6 +7,10 @@ function mediaTypeFromFile(file){
   return null;
 }
 
+// TOEIC Reading thường kéo dài 75 phút. V1.9 dùng URL tạm 6 giờ để media
+// không hết hạn giữa bài thi hoặc khi giảng viên soạn/chấm trong thời gian dài.
+const SIGNED_URL_TTL_SECONDS=6*60*60;
+
 export function createMediaService(sb){
   async function uploadMedia(file,prefix="media"){
     if(!file) return null;
@@ -22,14 +26,14 @@ export function createMediaService(sb){
 
   async function signedUrl(path){
     if(!path) return null;
-    const {data,error}=await sb.storage.from("test-media").createSignedUrl(path,3600);
+    const {data,error}=await sb.storage.from("test-media").createSignedUrl(path,SIGNED_URL_TTL_SECONDS);
     return error ? null : data?.signedUrl||null;
   }
 
   async function signedUrlMap(paths){
     const unique=[...new Set(paths.filter(Boolean))];
     if(!unique.length) return {};
-    const {data}=await sb.storage.from("test-media").createSignedUrls(unique,3600);
+    const {data}=await sb.storage.from("test-media").createSignedUrls(unique,SIGNED_URL_TTL_SECONDS);
     return Object.fromEntries((data||[]).filter(x=>x.signedUrl).map(x=>[x.path,x.signedUrl]));
   }
 
