@@ -39,15 +39,21 @@ const antiCheat=createAntiCheatController({
   registerViolation:({attemptId,eventType,details,clientEventId})=>sb.rpc("register_violation_v2",{
     p_attempt_id:attemptId,p_event_type:eventType,p_details:details,p_client_event_id:clientEventId
   }),
+  enforceAbsenceTimeout:({attemptId,leaveEventId})=>sb.rpc("enforce_absence_timeout_v1",{
+    p_attempt_id:attemptId,p_leave_event_id:leaveEventId
+  }),
   onCountChange:count=>{
     if(examState?.payload?.attempt) examState.payload.attempt.violation_count=count;
     const el=document.querySelector("#antiCheatStatus");
-    if(el) el.textContent=`Vi phạm: ${count}/3 · rời màn hình >30 giây mới tính`;
+    if(el) el.textContent=`Vi phạm: ${count}/3 · rời màn hình tính ngay · quá 15 giây hoặc lần 3 sẽ tự nộp`;
   },
-  onWarning:data=>alert(`Cảnh báo: lần ${data.violation_count}/3 rời màn hình quá 30 giây. Lần thứ 3 sẽ tự động nộp bài.`),
-  onSubmitted:()=>{
+  onWarning:data=>toast(`Đã ghi nhận vi phạm ${data.violation_count}/3. Quá 15 giây hoặc vi phạm lần thứ 3 sẽ tự động nộp bài.`,6000),
+  onSubmitted:data=>{
     const id=examState?.attemptId;
-    alert("Hệ thống đã tự động nộp bài vì đã có 3 lần rời màn hình quá 30 giây.");
+    const msg=data?.reason==="away_over_15_seconds"
+      ? "Bài đã tự động nộp vì bạn rời màn hình quá 15 giây."
+      : "Bài đã tự động nộp vì đã đủ 3 lần rời màn hình.";
+    alert(msg);
     if(id) go(`/result/${id}`);
   }
 });
@@ -189,6 +195,20 @@ async function boot(){
   addEventListener("hashchange", render);
   window.addEventListener("online",()=>{setSaveStatus("Có mạng – đang đồng bộ…","pending");flushAnswerQueue()});
   window.addEventListener("offline",()=>setSaveStatus("Mất mạng – đáp án sẽ lưu tạm","offline"));
+  document.addEventListener("fullscreenchange",()=>{
+    if(!examState || examState.preview) return;
+    saveAttemptUi();
+    flushAnswerQueue();
+  });
+  document.addEventListener("visibilitychange",()=>{
+    if(!examState || examState.preview) return;
+    saveAttemptUi();
+    if(document.visibilityState==="visible") flushAnswerQueue();
+  });
+  window.addEventListener("pagehide",()=>{
+    if(!examState || examState.preview) return;
+    saveAttemptUi();
+  });
   render();
 }
 async function loadProfile(){
@@ -960,7 +980,7 @@ async function renderTestDetail(id,tab="overview"){
         <div><div class="muted">Mở lúc</div><b>${fmt(t.opens_at)}</b></div>
         <div><div class="muted">Đóng lúc</div><b>${fmt(t.closes_at)}</b></div>
         <div><div class="muted">Chống gian lận</div><b>${esc(t.anti_cheat_mode)}</b></div>
-        <div><div class="muted">Ngưỡng tự nộp</div><b>${t.anti_cheat_mode==="off"?"Tắt":t.anti_cheat_mode==="strict"?"Lần đầu rời >30 giây":"Lần thứ 3 rời >30 giây"}</b></div>
+        <div><div class="muted">Ngưỡng tự nộp</div><b>${t.anti_cheat_mode==="off"?"Tắt":t.anti_cheat_mode==="strict"?"Rời màn hình lần đầu":"Rời >15 giây hoặc lần rời thứ 3"}</b></div>
         <div><div class="muted">Xem đáp án sau nộp</div><b>${t.show_answers_after_submit?"Có":"Không"}</b></div>
       </div>
     </section>
@@ -1054,7 +1074,7 @@ async function openEditTest(t){
       <label>Thời gian (phút)<input type="number" name="duration_minutes" value="${t.duration_minutes}" min="1" ${locked?"disabled":""}>${locked?'<span class="hint">🔒 Deadline của lượt đã bắt đầu phải giữ nhất quán.</span>':''}</label>
       <label>Số lần làm<input type="number" name="max_attempts" value="${t.max_attempts}" min="1"></label>
       <label>Chống gian lận<select name="anti_cheat_mode"><option value="warn_then_submit" ${t.anti_cheat_mode==="warn_then_submit"?"selected":""}>Cảnh báo rồi tự nộp</option><option value="strict" ${t.anti_cheat_mode==="strict"?"selected":""}>Nghiêm ngặt</option><option value="off" ${t.anti_cheat_mode==="off"?"selected":""}>Tắt</option></select></label>
-      <label>Ngưỡng chống gian lận<input value="${t.anti_cheat_mode==="off"?"Tắt":t.anti_cheat_mode==="strict"?"Lần đầu >30 giây":"Lần thứ 3 >30 giây"}" disabled></label>
+      <label>Ngưỡng chống gian lận<input value="${t.anti_cheat_mode==="off"?"Tắt":t.anti_cheat_mode==="strict"?"Rời màn hình lần đầu":"Rời >15 giây hoặc lần rời thứ 3"}" disabled></label>
       <label>Mở lúc<input type="datetime-local" name="opens_at" value="${toLocalInput(t.opens_at)}"></label>
       <label>Đóng lúc<input type="datetime-local" name="closes_at" value="${toLocalInput(t.closes_at)}"></label>
       <label class="span-2">Mô tả<textarea name="description" rows="3">${esc(t.description||"")}</textarea></label>
@@ -1562,12 +1582,13 @@ function confirmStart(testId,maxAttempts=1,used=0){
   const nextNo=used+1;
   modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal">
     <h2>Trước khi bắt đầu lượt ${nextNo}</h2>
-    <div class="warning-box"><b>Quy định chống gian lận</b><br>Rời tab/cửa sổ trên 30 giây mới tính 1 vi phạm. Hai lần đầu cảnh báo; lần thứ 3 hệ thống tự động nộp bài.</div>
+    <div class="warning-box"><b>Quy định chống gian lận</b><br>Mỗi lần rời màn hình được tính ngay 1 vi phạm. Quay lại trong 15 giây để tiếp tục; quá 15 giây hoặc rời màn hình lần thứ 3, hệ thống tự động nộp bài.</div>
     <p>Bài cho phép tối đa <b>${maxAttempts} lượt</b>. Bạn đã dùng <b>${used}</b> lượt. Đồng hồ bắt đầu ngay khi nhấn Bắt đầu.</p>
     <div class="row between"><button class="secondary" data-close>Hủy</button><button class="primary" id="confirmStart">Bắt đầu lượt ${nextNo}</button></div>
   </div></div>`;
   modalRoot.querySelector("[data-close]").onclick=closeModal;
   modalRoot.querySelector("#confirmStart").onclick=async()=>{
+    antiCheat.armAudio();
     const btn=modalRoot.querySelector("#confirmStart");btn.disabled=true;btn.textContent="Đang bắt đầu…";
     const {data,error}=await sb.rpc("start_attempt",{p_test_id:testId});
     if(error){btn.disabled=false;btn.textContent=`Bắt đầu lượt ${nextNo}`;return toast(error.message,6000);}
@@ -1695,7 +1716,7 @@ function drawExam(){
   const {payload,current}=examState;
   const q=payload.questions[current], a=payload.attempt;
   if(!q) return view.innerHTML=`<div class="card">Không có câu hỏi.</div>`;
-  const antiText=examState.preview?"Giảng viên làm thử · lưu lịch sử riêng, không tính vào kết quả sinh viên":a.anti_cheat_mode==="off"?"Chống gian lận: Tắt":a.anti_cheat_mode==="strict"?`Vi phạm: ${a.violation_count||0}/1 · rời màn hình >30 giây mới tính`:`Vi phạm: ${a.violation_count||0}/3 · rời màn hình >30 giây mới tính`;
+  const antiText=examState.preview?"Giảng viên làm thử · lưu lịch sử riêng, không tính vào kết quả sinh viên":a.anti_cheat_mode==="off"?"Chống gian lận: Tắt":a.anti_cheat_mode==="strict"?`Vi phạm: ${a.violation_count||0}/1 · rời màn hình tính ngay`:`Vi phạm: ${a.violation_count||0}/3 · rời màn hình tính ngay · quá 15 giây hoặc lần 3 sẽ tự nộp`;
   saveAttemptUi();
   view.innerHTML=`${examState.preview?`<section class="card preview-banner"><div class="row between wrap"><div><b>Chế độ làm thử</b><div class="muted">Giao diện như sinh viên · tự lưu trong lịch sử riêng của giảng viên</div></div><a class="btn secondary" href="#/test/${examState.testId}/practice">← Thoát làm thử</a></div></section>`:""}<section class="exam-layout"><div class="exam-main">
     <div class="card"><div class="row between wrap"><div><b>Part ${q.part}</b><div class="muted">Câu ${q.number} · ${current+1}/${payload.questions.length}</div></div><div class="exam-status"><span id="saveStatus" class="save-status">${esc(examState.saveStatus||"Đã lưu")}</span><div id="timer" class="timer"></div></div></div></div>
@@ -1715,7 +1736,7 @@ function drawExam(){
   </div>
   <aside class="exam-side"><div class="card sticky"><div class="row between"><b>Câu hỏi</b><span class="muted">${payload.questions.filter(x=>x.selected).length}/${payload.questions.length}</span></div>
   <div class="palette">${payload.questions.map((x,i)=>`<button class="qbtn ${x.selected?"done":""} ${x.marked?"review":""} ${i===current?"current":""}" data-i="${i}">${x.number}</button>`).join("")}</div>
-  <button class="${examState.preview?"primary":"danger"} full" id="submitBtn">${examState.preview?"Kết thúc làm thử":"Nộp bài"}</button><p id="antiCheatStatus" class="muted small">${esc(antiText)}</p></div></aside></section>`;
+  <button class="${examState.preview?"primary":"danger"} full" id="submitBtn">${examState.preview?"Kết thúc làm thử":"Nộp bài"}</button>${examState.preview?"":'<button class="secondary full" id="fullscreenBtn" type="button">⛶ Toàn màn hình</button>'}<p id="antiCheatStatus" class="muted small">${esc(antiText)}</p></div></aside></section>`;
 
   document.querySelectorAll(".qbtn").forEach(b=>b.onclick=()=>{examState.current=+b.dataset.i;drawExam()});
   document.querySelector("#prevBtn").onclick=()=>{examState.current--;drawExam()};
@@ -1723,6 +1744,12 @@ function drawExam(){
   document.querySelectorAll('input[name="choice"]').forEach(r=>r.onchange=()=>saveCurrent(r.value));
   document.querySelector("#markReview").onchange=e=>saveCurrent(q.selected,e.target.checked);
   document.querySelector("#submitBtn").onclick=confirmSubmit;
+  const fullscreenBtn=document.querySelector("#fullscreenBtn");
+  if(fullscreenBtn) fullscreenBtn.onclick=async()=>{
+    saveAttemptUi();
+    flushAnswerQueue();
+    try{ await document.documentElement.requestFullscreen?.(); }catch{}
+  };
   clearInterval(timerId);
   updateTimer(); timerId=setInterval(updateTimer,1000);
 }
@@ -1858,6 +1885,34 @@ function renderStoredPracticeResult(testId,attemptId,questions,attempt={}){
   examState=null;
   document.querySelector("#retryPreview")?.addEventListener("click",()=>go(`/preview/${testId}`));
 }
+function renderAttemptReview(questions,showAnswers){
+  let previousGroup=null;
+  return questions.map(q=>{
+    const showStimuli=!!q.stimulus_group_id && q.stimulus_group_id!==previousGroup;
+    if(q.stimulus_group_id) previousGroup=q.stimulus_group_id;
+    else previousGroup=null;
+    const selected=q.selected||null;
+    const correct=showAnswers?q.correct:null;
+    const stateText=!selected?"Chưa trả lời":showAnswers?(q.is_correct?"Đúng":"Sai"):`Đã chọn ${selected}`;
+    const stateClass=!selected?"unanswered":showAnswers?(q.is_correct?"correct":"wrong"):"selected-only";
+    const choices=(q.choices||[]).map(c=>{
+      const isSelected=selected===c.key;
+      const isCorrect=showAnswers && correct===c.key;
+      const cls=["review-choice",isSelected?"selected":"",isCorrect?"correct-choice":"",showAnswers&&isSelected&&!isCorrect?"wrong-choice":""].filter(Boolean).join(" ");
+      const tag=isCorrect?'<span class="review-choice-tag correct">Đáp án đúng</span>':isSelected?'<span class="review-choice-tag">Bạn chọn</span>':"";
+      return `<div class="${cls}"><div class="review-choice-key"><b>${esc(c.key)}.</b></div><div class="choice-body">${renderMedia(c.media_type,c.url,null,"choice-media")}<div class="rich-content">${renderRichText(c.content||"")}</div></div>${tag}</div>`;
+    }).join("");
+    return `<article class="review-question">
+      ${showStimuli?(q.stimuli||[]).map(st=>`<div class="stimulus review-stimulus">${renderMedia(st.type,st.url,st.content)}</div>`).join(""):""}
+      <div class="review-question-head"><div><b>Part ${q.part}</b> · Câu ${q.number}</div><span class="review-state ${stateClass}">${esc(stateText)}</span></div>
+      ${renderMedia(q.media_type,q.url,null)}
+      <div class="question-title"><b>${q.number}.</b><div class="rich-content">${renderRichText(q.content||"")}</div></div>
+      <div class="review-choices">${choices}</div>
+      <div class="review-summary">Bạn chọn: <b>${esc(selected||"—")}</b>${showAnswers?` · Đáp án đúng: <b>${esc(correct||"—")}</b>`:' · <span class="muted">Đáp án đúng chưa được công bố</span>'}</div>
+    </article>`;
+  }).join("");
+}
+
 async function renderResult(attemptId,staffView=false){
   showLoading("Đang tải kết quả...");
   const {data,error}=await sb.rpc("get_attempt_result",{p_attempt_id:attemptId});
@@ -1869,16 +1924,31 @@ async function renderResult(attemptId,staffView=false){
     return view.innerHTML=`<div class="card">${esc(error.message)}</div>`;
   }
   examState=null;
+  antiCheat.reset();
   try{ if(document.fullscreenElement) await document.exitFullscreen(); }catch{}
-  const ans=data.answers||[],total=data.total_questions||ans.length||100;
+  const ans=data.answers||[],questions=data.questions||[];
+  if(questions.length) await hydrateMedia(questions);
+  const total=data.total_questions||questions.length||ans.length||100;
   const pct=total?Math.round((Number(data.correct_count||0)/total)*1000)/10:0;
+  const showAnswers=staffView || !!data.show_answers;
+  const autoReason=data.submission_reason==="anti_cheat"
+    ? '<div class="warning-box result-warning"><b>Bài được hệ thống tự động nộp do chống gian lận.</b></div>'
+    : data.submission_reason==="timeout"
+      ? '<div class="warning-box result-warning"><b>Bài được hệ thống tự động nộp vì hết thời gian.</b></div>'
+      : "";
+  const review=questions.length
+    ? renderAttemptReview(questions,showAnswers)
+    : ans.length
+      ? ans.map(x=>`<div class="result-row"><b>Câu ${x.number}</b> · Bạn chọn: <b>${esc(x.selected||"—")}</b>${showAnswers?` · Đáp án: <b>${esc(x.correct||"—")}</b> · <span class="${x.is_correct?"correct":"wrong"}">${x.is_correct?"Đúng":"Sai"}</span>`:""}</div>`).join("")
+      : '<div class="empty">Chưa có dữ liệu xem lại bài làm. Hãy áp dụng migration Supabase V1.10.</div>';
   view.innerHTML=`${staffView?staffNav("tests"):""}<section class="card">
     <span class="eyebrow">Kết quả${data.attempt_no?` · Lượt ${data.attempt_no}`:""}</span><h1>Hoàn thành bài thi</h1>
     <div class="row score-row"><div><div class="big-score">${data.correct_count}/${total}</div><div class="muted">${pct}%</div></div><div>${statusBadge(data.status)}</div></div>
-    <p class="muted">Nộp lúc ${fmt(data.submitted_at)}</p>${staffView?'<button class="btn primary" id="backFromResult">← Quay lại bài kiểm tra</button>':'<a class="btn primary" href="#/student">Về danh sách bài</a>'}
+    <p class="muted">Nộp lúc ${fmt(data.submitted_at)}${data.violation_count!=null?` · Vi phạm: ${data.violation_count}/3`:""}</p>${autoReason}${staffView?'<button class="btn primary" id="backFromResult">← Quay lại bài kiểm tra</button>':'<a class="btn primary" href="#/student">Về danh sách bài</a>'}
   </section>
-  <section class="card result-list"><h2>Đáp án</h2>${ans.map(x=>`<div class="result-row"><b>Câu ${x.number}</b> · Bạn chọn: <b>${esc(x.selected||"—")}</b> · Đáp án: <b>${esc(x.correct)}</b> · <span class="${x.is_correct?"correct":"wrong"}">${x.is_correct?"Đúng":"Sai"}</span></div>`).join("")}</section>`;
+  <section class="card result-list"><div class="row between wrap"><div><h2>Xem lại bài làm</h2><p class="muted">${showAnswers?"Đáp án đúng được hiển thị theo cài đặt của bài kiểm tra.":"Bạn được xem lại câu hỏi và phương án đã chọn; đáp án đúng chưa được công bố."}</p></div></div>${review}</section>`;
   document.querySelector("#backFromResult")?.addEventListener("click",()=>history.back());
 }
+
 
 boot();

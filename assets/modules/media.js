@@ -7,7 +7,7 @@ function mediaTypeFromFile(file){
   return null;
 }
 
-// TOEIC Reading thường kéo dài 75 phút. V1.9 dùng URL tạm 6 giờ để media
+// TOEIC Reading thường kéo dài 75 phút. V1.10 tiếp tục dùng URL tạm 6 giờ để media
 // không hết hạn giữa bài thi hoặc khi giảng viên soạn/chấm trong thời gian dài.
 const SIGNED_URL_TTL_SECONDS=6*60*60;
 

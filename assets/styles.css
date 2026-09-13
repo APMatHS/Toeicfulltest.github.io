@@ -249,3 +249,38 @@ details.group-box>summary{padding:2px}
   .authoring-tools{align-items:stretch;flex-direction:column}
   .author-search{max-width:none}
 }
+
+/* V1.10 — anti-cheat overlay + post-submit review */
+.anti-cheat-overlay{position:fixed;inset:0;z-index:10000;background:rgba(15,23,42,.96);display:grid;place-items:center;padding:20px;color:#fff;text-align:center}
+.anti-cheat-overlay[hidden]{display:none!important}
+.anti-cheat-panel{width:min(620px,100%);border:2px solid rgba(255,255,255,.28);border-radius:22px;padding:28px;background:rgba(127,29,29,.92);box-shadow:0 24px 80px rgba(0,0,0,.38)}
+.anti-cheat-kicker{font-size:.82rem;font-weight:900;letter-spacing:.12em;margin-bottom:10px}
+.anti-cheat-count{font-size:clamp(5rem,18vw,9rem);line-height:.95;font-weight:950;font-variant-numeric:tabular-nums;margin:8px 0}
+.anti-cheat-panel h2{margin:.4rem 0 .65rem;font-size:clamp(1.35rem,4vw,2rem)}
+.anti-cheat-panel p{margin:.5rem auto;max-width:520px;line-height:1.55}
+.anti-cheat-meta{margin-top:16px;font-weight:800;background:rgba(255,255,255,.12);border-radius:12px;padding:10px 12px}
+.result-warning{margin:14px 0}
+.review-question{border:1px solid var(--line);border-radius:16px;padding:16px;margin:16px 0;background:#fff}
+.review-question-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:12px}
+.review-state{font-size:.78rem;font-weight:800;border-radius:999px;padding:5px 9px;background:#eef2f7;color:#475467;white-space:nowrap}
+.review-state.correct{background:#ecfdf3;color:#027a48}
+.review-state.wrong{background:#fff1f2;color:#b42318}
+.review-state.selected-only{background:#eff6ff;color:#1d4ed8}
+.review-state.unanswered{background:#f2f4f7;color:#667085}
+.review-stimulus{margin-bottom:14px}
+.review-choices{display:grid;gap:9px;margin-top:12px}
+.review-choice{display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:flex-start;gap:10px;border:1px solid var(--line);border-radius:12px;padding:11px 12px;background:#fff}
+.review-choice.selected{border-width:2px;border-color:#2563eb;background:#eff6ff}
+.review-choice.correct-choice{border-color:#16a34a;background:#f0fdf4}
+.review-choice.wrong-choice{border-color:#dc2626;background:#fff1f2}
+.review-choice-key{padding-top:2px}
+.review-choice-tag{align-self:center;font-size:.72rem;font-weight:800;border-radius:999px;padding:4px 7px;background:#dbeafe;color:#1d4ed8;white-space:nowrap}
+.review-choice-tag.correct{background:#dcfce7;color:#15803d}
+.review-summary{margin-top:12px;padding-top:10px;border-top:1px dashed var(--line);font-size:.9rem}
+@media (max-width:620px){
+  .anti-cheat-panel{padding:22px 16px;border-radius:18px}
+  .review-question{padding:13px}
+  .review-question-head{align-items:flex-start;flex-direction:column}
+  .review-choice{grid-template-columns:26px minmax(0,1fr)}
+  .review-choice-tag{grid-column:2;justify-self:start}
+}

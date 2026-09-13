@@ -1,24 +1,32 @@
-# TOEIC Full Test — V1.9
+# TOEIC Full Test — V1.10
 
 Ứng dụng thi TOEIC dùng Supabase cho tài khoản, đề thi, lượt làm, đáp án và media.
 
-## Cấu trúc JavaScript
+## Chống gian lận V1.10
 
-- `assets/app.js`: điều phối màn hình, route và luồng nghiệp vụ.
-- `assets/modules/anti-cheat.js`: theo dõi phiên rời màn hình và chính sách 30 giây.
-- `assets/modules/utils.js`: hàm dùng chung và trạng thái trình duyệt.
-- `assets/modules/media.js`: tải media và tạo URL tạm từ Supabase Storage.
-- `assets/modules/rich-editor.js`: trình soạn thảo, làm sạch HTML và ảnh nhúng.
-- `assets/modules/authoring-view.js`: giao diện danh sách và tìm kiếm khi soạn đề.
-- `assets/config.js`: cấu hình kết nối Supabase phía trình duyệt.
+- Mỗi lần sinh viên rời màn hình được tính **ngay 1 vi phạm**.
+- Lần 1 và 2: hiện cảnh báo che toàn trang và đếm ngược 15 giây.
+- Quay lại trước 15 giây: tiếp tục làm, nhưng vi phạm vẫn được giữ.
+- Rời quá 15 giây: tự động nộp bài.
+- Rời màn hình lần thứ 3: tự động nộp ngay, không chờ 15 giây.
+- Desktop: `window_blur` và `tab_hidden` được gộp thành một phiên để không tính trùng.
+- Mobile: chỉ `visibilitychange -> hidden` được dùng để tính vi phạm, tránh tính oan do mất focus.
+- Thoát fullscreen riêng lẻ không tự cộng thêm vi phạm.
+- Có cảnh báo toàn màn hình và âm báo khi trình duyệt cho phép.
 
-## Chống gian lận V1.9
+## Lưu đáp án
 
-- Rời tab/cửa sổ không quá 30 giây: không tính vi phạm.
-- Rời trên 30 giây: tính 1 lần.
-- Lần 1 và 2: cảnh báo.
-- Lần 3: tự động nộp bài.
-- Thoát fullscreen riêng lẻ không được tính thêm một vi phạm.
+- Khi chọn A/B/C/D, đáp án được ghi vào hàng đợi `localStorage` **trước khi** đồng bộ Supabase.
+- Nếu đổi tab, thoát fullscreen, mất mạng, refresh hoặc quay lại bài thi, đáp án chưa đồng bộ được phục hồi từ hàng đợi cục bộ.
+- Khi có mạng, hàng đợi tự đồng bộ qua `save_answer_v2`.
+- Trạng thái “Đánh dấu xem lại” cũng được lưu kể cả khi câu chưa chọn đáp án.
+
+## Xem lại sau khi nộp
+
+- Sau khi nộp, sinh viên xem lại toàn bộ câu hỏi, passage, ảnh, bảng và phương án mình đã chọn ngay trên trang kết quả.
+- Nếu giảng viên bật **Cho xem đáp án**, trang kết quả hiển thị đáp án đúng và đúng/sai từng câu.
+- Nếu tắt, sinh viên vẫn xem được bài đã làm nhưng không nhận được đáp án đúng hoặc trạng thái đúng/sai từng câu.
+- Bài tự nộp do chống gian lận/hết giờ vẫn có thể xem lại theo cùng quy tắc.
 
 ## Trộn câu
 
@@ -28,10 +36,11 @@
 
 ## Media
 
-Ảnh/audio nằm trong bucket private `test-media`. V1.9 dùng signed URL 6 giờ để không hết hạn giữa bài thi dài.
+Ảnh/audio nằm trong bucket private `test-media`. Signed URL dùng thời hạn 6 giờ để tránh hết hạn giữa bài thi dài.
 
 ## Triển khai
 
-1. Upload toàn bộ mã nguồn V1.9 lên GitHub Pages.
-2. Sau khi frontend mới đã lên, chạy `supabase/v1.9_anti_cheat_and_stability.sql` trong Supabase SQL Editor.
-3. Không cần chạy Python hay script ghép mã nào.
+1. Upload toàn bộ mã nguồn V1.10 lên GitHub Pages.
+2. Sau khi frontend V1.10 đã lên, chạy `supabase/v1.10_exam_integrity_and_review.sql` trong Supabase SQL Editor.
+3. Migration V1.10 tự chứa phần lưu đáp án cần thiết, nên có thể nâng trực tiếp từ V1.8 hoặc V1.9; không bắt buộc chạy SQL V1.9 trước.
+4. Không cần Python hay script ghép mã nào.
