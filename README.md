@@ -38,6 +38,11 @@
 
 Ảnh/audio nằm trong bucket private `test-media`. Signed URL dùng thời hạn 6 giờ để tránh hết hạn giữa bài thi dài.
 
+
+## Khóa nội dung và xóa lượt làm
+
+Khi sinh viên bắt đầu lượt đầu tiên, đề được khóa để bảo toàn dữ liệu. `Reset lượt` không mở khóa. Nếu giảng viên **xóa hẳn tất cả lượt sinh viên** của bài kiểm tra, V1.10 tự mở khóa nội dung và tải lại trạng thái đề ngay, cho phép chỉnh sửa tiếp.
+
 ## Triển khai
 
 1. Upload toàn bộ mã nguồn V1.10 lên GitHub Pages.

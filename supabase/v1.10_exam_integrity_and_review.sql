@@ -386,3 +386,75 @@ revoke all on function public.get_attempt_result(uuid)
 from public, anon;
 grant execute on function public.get_attempt_result(uuid)
 to authenticated;
+
+-- Khi staff xóa hẳn lượt sinh viên cuối cùng của một bài kiểm tra,
+-- tự mở khóa nội dung để bài kiểm tra có thể được chỉnh sửa lại.
+-- Reset lượt KHÔNG mở khóa vì bản ghi lượt cũ vẫn được giữ để đối soát.
+create or replace function public.staff_delete_attempt(p_attempt_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  a public.attempts%rowtype;
+  p public.profiles%rowtype;
+  v_remaining int;
+  v_unlocked boolean:=false;
+begin
+  if public.current_role() not in ('teacher','system_admin') then
+    raise exception 'Forbidden';
+  end if;
+
+  select * into a
+  from public.attempts
+  where id=p_attempt_id
+  for update;
+  if not found then raise exception 'Attempt not found'; end if;
+
+  select * into p from public.profiles where id=a.student_id;
+
+  insert into public.audit_logs(actor_id,action,target_type,target_id,metadata)
+  values(
+    auth.uid(),'attempt_deleted','attempt',a.id::text,
+    jsonb_build_object(
+      'test_id',a.test_id,
+      'student_id',a.student_id,
+      'student_name',p.full_name,
+      'student_code',p.student_code,
+      'attempt_no',a.attempt_no,
+      'status',a.status,
+      'score',a.score,
+      'correct_count',a.correct_count,
+      'started_at',a.started_at,
+      'submitted_at',a.submitted_at
+    )
+  );
+
+  delete from public.attempts where id=p_attempt_id;
+
+  select count(*)::int into v_remaining
+  from public.attempts
+  where test_id=a.test_id;
+
+  if v_remaining=0 then
+    update public.tests
+    set content_locked_at=null
+    where id=a.test_id
+      and content_locked_at is not null;
+    v_unlocked:=found;
+  end if;
+
+  return jsonb_build_object(
+    'ok',true,
+    'remaining_attempts',v_remaining,
+    'content_unlocked',v_unlocked
+  );
+end
+$$;
+
+revoke all on function public.staff_delete_attempt(uuid)
+from public, anon;
+grant execute on function public.staff_delete_attempt(uuid)
+to authenticated;
+

@@ -1266,8 +1266,14 @@ async function confirmAttemptAction(action,testId,attemptId,name){
   modalRoot.querySelector("[data-close]").onclick=closeModal;
   modalRoot.querySelector("#doAttemptAction").onclick=async()=>{
     const fn=isDelete?"staff_delete_attempt":"staff_reset_attempt";
-    const {error}=await sb.rpc(fn,{p_attempt_id:attemptId}); if(error) return toast(error.message,6000);
-    closeModal();toast(isDelete?"Đã xóa bài làm":"Đã reset lượt làm");
+    const {data:result,error}=await sb.rpc(fn,{p_attempt_id:attemptId}); if(error) return toast(error.message,6000);
+    closeModal();
+    if(isDelete){
+      toast(result?.content_unlocked?"Đã xóa bài làm · đề đã được mở khóa":"Đã xóa bài làm");
+      await refreshCurrentTest(testId,"submissions");
+      return;
+    }
+    toast("Đã reset lượt làm");
     if(testWorkspace?.id===testId){testWorkspace.loaded.submissions=false;testWorkspace.loaded.live=false;}
     clearLiveChannel();
     await renderSubmissionsTab(testId);
