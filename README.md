@@ -1,4 +1,15 @@
-# TOEIC Full Test — V1.14
+# TOEIC Full Test — V1.16
+
+
+## V1.16 — chỉ tính vi phạm khi rời phần kiểm tra
+
+- Thoát fullscreen nhưng vẫn ở trang thi: **không tính vi phạm**.
+- Back/bấm liên kết/đổi route ra khỏi `#/exam/...`: giữ lại trong bài và tính **1 vi phạm**.
+- Desktop vẫn bắt chuyển tab/cửa sổ; mobile chỉ bắt trạng thái trang bị ẩn để hạn chế báo nhầm.
+- Nộp bài, hết giờ và tự nộp được đánh dấu là điều hướng hợp lệ, không bị cộng thêm vi phạm.
+- Không cần migration Supabase mới.
+
+Chi tiết: `docs/releases/V1.16.md`.
 
 ## V1.14 — Authoring workspace & grading UX
 

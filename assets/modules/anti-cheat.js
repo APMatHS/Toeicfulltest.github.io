@@ -200,7 +200,7 @@ export function createAntiCheatController({
   function beginAway(source){
     const exam=activeExam();
     if(!exam) return;
-    if(mobile && source!=="tab_hidden") return;
+    if(mobile && source!=="tab_hidden" && source!=="route_leave") return;
 
     if(away && away.attemptId===exam.attemptId){
       if(!away.returned){
@@ -231,6 +231,19 @@ export function createAntiCheatController({
     beep(980,0.15);
     sendImmediateViolation(away);
     startTicker(away);
+    return away;
+  }
+
+  function recordRouteLeave(){
+    const state=beginAway("route_leave");
+    if(!state) return false;
+    // Điều hướng ra khỏi trang thi được giữ lại ngay trên trang thi.
+    // Đây là 1 vi phạm, nhưng không bắt sinh viên chờ 15 giây vì họ đã được đưa trở lại tức thì.
+    if(state.ticker) clearInterval(state.ticker);
+    state.returned=true;
+    state.returnedAt=Date.now();
+    updateOverlay(state);
+    return true;
   }
 
   async function endAway(){
@@ -278,8 +291,7 @@ export function createAntiCheatController({
       });
       window.addEventListener("focus",endAway);
     }
-    window.addEventListener("hashchange",reset);
   }
 
-  return {bind,reset,armAudio,isMobile:()=>mobile};
+  return {bind,reset,armAudio,recordRouteLeave,isMobile:()=>mobile};
 }

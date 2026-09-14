@@ -34,6 +34,7 @@ const staffPageCache = new Map();
 let activeStaffPageKey = null;
 const staffDataCache={users:null,classes:null,tests:null,updatedAt:0};
 let staffPrefetchPromise=null;
+let lastRoute=route();
 
 const examApp=createExamApp({
   sb,modalRoot,signedUrlMap,toast,closeModal,showLoading,staffNav,
@@ -67,7 +68,11 @@ const antiCheat=createAntiCheatController({
       ? "Bài đã tự động nộp vì bạn rời màn hình quá 15 giây."
       : "Bài đã tự động nộp vì đã đủ 3 lần rời màn hình.";
     alert(msg);
-    if(id) go(`/result/${id}`);
+    if(id){
+      examApp.resetExamState();
+      antiCheat.reset();
+      go(`/result/${id}`);
+    }
   }
 });
 examApp.setAntiCheat(antiCheat);
@@ -219,7 +224,7 @@ async function boot(){
     }, 0);
   });
 
-  addEventListener("hashchange", render);
+  addEventListener("hashchange", handleRouteChange);
   window.addEventListener("online",()=>{setSaveStatus("Có mạng – đang đồng bộ…","pending");flushAnswerQueue()});
   window.addEventListener("offline",()=>setSaveStatus("Mất mạng – đáp án sẽ lưu tạm","offline"));
   document.addEventListener("fullscreenchange",()=>{
@@ -238,6 +243,27 @@ async function boot(){
   });
   render();
 }
+
+function handleRouteChange(){
+  const next=route();
+  const state=examApp.getExamState();
+  const examPath=state && !state.preview ? `/exam/${state.attemptId}` : null;
+
+  // V1.16: chỉ tính khi sinh viên thực sự điều hướng ra ngoài phần kiểm tra.
+  // Back, bấm logo/profile hoặc đổi hash đều được giữ lại trong bài thi và tính đúng 1 vi phạm.
+  if(examPath && lastRoute===examPath && next!==examPath){
+    history.replaceState(history.state,"",`${location.pathname}${location.search}#${examPath}`);
+    lastRoute=examPath;
+    saveAttemptUi();
+    flushAnswerQueue();
+    antiCheat.recordRouteLeave();
+    return;
+  }
+
+  lastRoute=next;
+  render();
+}
+
 async function loadProfile(){
   if(!session) return;
   const {data,error}=await sb.from("profiles").select("*").eq("id",session.user.id).single();
@@ -274,6 +300,13 @@ function renderHeader(){
     <a class="user-name small profile-link" href="#/profile" title="Hồ sơ">${esc(profile?.full_name || session.user.email)} · ${esc(roleLabel(profile?.role||""))}</a>
     <button class="ghost sm header-btn" id="logoutBtn">Đăng xuất</button>`;
   document.querySelector("#logoutBtn")?.addEventListener("click", async()=>{
+    const activeExam=examApp.getExamState();
+    if(activeExam && !activeExam.preview){
+      saveAttemptUi();
+      flushAnswerQueue();
+      antiCheat.recordRouteLeave();
+      return;
+    }
     clearLiveChannel();
     clearStaffPages();
     testWorkspace=null;
@@ -284,6 +317,7 @@ function renderHeader(){
 async function render(){
   examApp.stopTimer();
   const p=route();
+  lastRoute=p;
   if(!p.startsWith("/preview/") && examApp.getExamState()?.preview){
     examApp.resetExamState();
     closeModal();

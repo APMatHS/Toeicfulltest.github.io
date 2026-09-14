@@ -294,7 +294,13 @@ async function flushAnswerQueue(){
       });
       if(error){ setSaveStatus("Lưu tạm – chờ mạng","offline"); break; }
       queue.shift(); writeJSON(attemptQueueKey(examState.attemptId),queue);
-      if(data?.submitted){ go(`/result/${examState.attemptId}`); return; }
+      if(data?.submitted){
+        const id=examState.attemptId;
+        antiCheat.reset();
+        resetExamState();
+        go(`/result/${id}`);
+        return;
+      }
     }
     if(!queue.length) setSaveStatus("Đã lưu","saved");
   }finally{answerFlushBusy=false;}
@@ -309,7 +315,12 @@ function updateTimer(){
   if(left<=0){
     clearInterval(timerId);
     if(examState.preview) renderPreviewResult("expired");
-    else go(`/result/${examState.attemptId}`);
+    else {
+      const id=examState.attemptId;
+      antiCheat.reset();
+      resetExamState();
+      go(`/result/${id}`);
+    }
   }
 }
 function confirmSubmit(){
@@ -334,9 +345,12 @@ function confirmSubmit(){
     }
     const {error}=await sb.rpc("submit_attempt",{p_attempt_id:examState.attemptId});
     if(error) return toast(error.message);
-    localStorage.removeItem(attemptQueueKey(examState.attemptId));
-    localStorage.removeItem(attemptUiKey(examState.attemptId));
-    closeModal(); go(`/result/${examState.attemptId}`);
+    const id=examState.attemptId;
+    localStorage.removeItem(attemptQueueKey(id));
+    localStorage.removeItem(attemptUiKey(id));
+    antiCheat.reset();
+    resetExamState();
+    closeModal(); go(`/result/${id}`);
   };
 }
 async function renderPreviewResult(status="submitted"){
