@@ -24,6 +24,7 @@ export function createAntiCheatController({
   function activeExam(){
     const state=getExamState?.();
     if(!state || state.preview) return null;
+    if(state.payload?.attempt?.anti_cheat_mode==="off") return null;
     if(getRoute?.()!==`/exam/${state.attemptId}`) return null;
     return state;
   }
@@ -130,7 +131,7 @@ export function createAntiCheatController({
     state.sendingViolation=true;
     try{
       const details={
-        policy:"v1.13_exit_immediate_ack",
+        policy:"v1.10_exit_immediate",
         phase:"leave",
         left_at:new Date(state.startedAt).toISOString(),
         sources:[...state.sources],
@@ -143,13 +144,14 @@ export function createAntiCheatController({
         details,
         clientEventId:state.leaveEventId
       });
-      if(error){ console.error("Anti-cheat V1.13:",error); return; }
+      if(error){ console.error("Anti-cheat:",error); return; }
       if(data?.duplicate){ state.violationSent=true; return; }
       if(data?.ignored) return;
       state.violationSent=true;
       state.violationCount=Number(data?.violation_count)||0;
       onCountChange?.(state.violationCount);
       updateOverlay(state);
+      if(!data?.submitted) onWarning?.(data);
       if(data?.submitted){
         state.closed=true;
         hideOverlay();
@@ -173,7 +175,7 @@ export function createAntiCheatController({
         attemptId:state.attemptId,
         leaveEventId:state.leaveEventId
       });
-      if(error){ console.error("Anti-cheat timeout V1.13:",error); return false; }
+      if(error){ console.error("Anti-cheat timeout:",error); return false; }
       if(data?.submitted){
         state.closed=true;
         hideOverlay();
