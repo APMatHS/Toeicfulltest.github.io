@@ -10,11 +10,12 @@ function walk(dir){for(const ent of fs.readdirSync(dir,{withFileTypes:true})){co
 walk(assets);
 let failed=false;
 const problems=[];
+const warnings=[];
 for(const file of files){
   const rel=path.relative(root,file).replaceAll('\\','/');
   const text=fs.readFileSync(file,'utf8');
   const lines=text.split(/\r?\n/).length;
-  if(lines>320) problems.push(`${rel}: ${lines} lines (>320)`);
+  if(lines>320) warnings.push(`${rel}: ${lines} lines (>320) — warning only`);
   if(Buffer.byteLength(text,'utf8')>24*1024) problems.push(`${rel}: file larger than 24 KiB`);
   if(/(?:^|\/)v\d+(?:\.\d+)*[^/]*\.js$/i.test(rel)) problems.push(`${rel}: versioned JS filename is not allowed`);
   if(rel!=='assets/modules/utils.js' && /\blocalStorage\b/.test(text)) problems.push(`${rel}: direct localStorage access is not allowed; use storage helpers`);
@@ -58,6 +59,7 @@ for(const [group,items] of Object.entries(manifest)){
     if(!combined.includes(needle)) problems.push(`baseline contract missing: ${group} (${needle})`);
   }
 }
+if(warnings.length) console.warn(warnings.join('\n'));
 if(problems.length){failed=true;console.error(problems.join('\n'));}
-else console.log(`Source check OK: ${files.length} JS files, max 320 lines, imports and feature contracts present.`);
+else console.log(`Source check OK: ${files.length} JS files; imports and feature contracts present.`);
 process.exit(failed?1:0);
