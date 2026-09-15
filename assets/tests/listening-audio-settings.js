@@ -1,10 +1,16 @@
 import { esc } from "../modules/utils.js";
+import { MAX_AUDIO_UPLOAD_BYTES } from "../modules/media.js";
 
 function formatDuration(seconds){
   const value=Math.max(0,Math.round(Number(seconds)||0));
   if(!value)return "Chưa xác định";
   const h=Math.floor(value/3600),m=Math.floor((value%3600)/60),s=value%60;
   return h?`${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`:`${m}:${String(s).padStart(2,"0")}`;
+}
+
+function formatBytes(bytes){
+  const mb=Number(bytes||0)/(1024*1024);
+  return `${mb.toFixed(mb>=10?1:2)} MB`;
 }
 
 function audioDuration(file){
@@ -29,7 +35,8 @@ export function createListeningAudioSettings(ctx){
       <div class="row between wrap"><div><h2>Audio Listening Part 1–4</h2><p class="muted">Một file audio chung. Sinh viên bấm Bắt đầu nghe một lần; audio chạy liên tục, không pause, không tua và không nghe lại.</p></div><span class="status ${has?"ok":"warn"}">${has?"Đã có audio":"Chưa có audio"}</span></div>
       ${has?`<div class="listening-audio-meta"><div><span class="muted">Tên file</span><b>${esc(test.listening_audio_filename||"Audio Listening")}</b></div><div><span class="muted">Thời lượng</span><b>${formatDuration(test.listening_audio_duration_seconds)}</b></div></div>${tooLong?`<div class="warning-box"><b>Audio dài hơn thời lượng bài kiểm tra (${test.duration_minutes} phút).</b><br>Hãy tăng thời lượng bài trước khi Publish.</div>`:""}<div id="listeningAudioTeacherPreview" class="listening-audio-preview muted">Đang tạo liên kết nghe thử…</div>`:'<div class="warning-box"><b>Cần tải 1 file audio trước khi xuất bản Listening/Full Test.</b><br>Không cần gắn audio riêng cho từng câu hoặc từng nhóm.</div>'}
       <div class="row wrap"><label class="btn ${has?"secondary":"primary"} ${locked?"disabled":""}">${has?"Thay file audio":"Tải audio"}<input id="listeningAudioUpload" type="file" accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/aac,audio/ogg,.mp3,.m4a,.wav,.aac,.ogg" ${locked?"disabled":""} hidden></label>${has?`<button type="button" class="danger" id="removeListeningAudio" ${locked?"disabled":""}>Xóa audio</button>`:""}</div>
-      ${locked?'<p class="muted small">🔒 Audio đã khóa vì đã có sinh viên bắt đầu bài.</p>':'<p class="muted small">Nên dùng MP3/M4A. File cũ được giữ trong Storage để không làm hỏng bài đã nhân bản; có thể dọn media không còn dùng sau.</p>'}
+      <div id="listeningAudioUploadProgress" class="listening-upload-progress" hidden><progress max="100" value="0" style="width:min(100%,480px)"></progress> <b data-progress-text>0%</b><div class="muted small" data-progress-note></div></div>
+      ${locked?'<p class="muted small">🔒 Audio đã khóa vì đã có sinh viên bắt đầu bài.</p>':`<p class="muted small">Nên dùng MP3/M4A. Tối đa ${formatBytes(MAX_AUDIO_UPLOAD_BYTES)}. File trên 6 MB tự dùng upload tiếp tục được khi mạng chập chờn.</p>`}
     </section>`;
   }
 
@@ -44,16 +51,34 @@ export function createListeningAudioSettings(ctx){
     if(input)input.onchange=async()=>{
       const file=input.files?.[0];if(!file)return;
       if(!file.type.startsWith("audio/")&&!/\.(mp3|m4a|wav|aac|ogg)$/i.test(file.name||"")){input.value="";return toast("Vui lòng chọn file audio MP3/M4A/WAV/AAC/OGG.",6000);}
+      if(file.size>MAX_AUDIO_UPLOAD_BYTES){input.value="";return toast(`Audio ${formatBytes(file.size)} vượt giới hạn ${formatBytes(MAX_AUDIO_UPLOAD_BYTES)}. Hãy nén MP3 hoặc chọn file nhỏ hơn.`,7000);}
       const label=input.closest("label"),oldText=label?.childNodes?.[0]?.textContent||"Tải audio";
-      if(label){label.classList.add("disabled");input.disabled=true;label.childNodes[0].textContent="Đang tải audio…";}
+      const progress=document.querySelector("#listeningAudioUploadProgress"),bar=progress?.querySelector("progress"),progressText=progress?.querySelector("[data-progress-text]"),progressNote=progress?.querySelector("[data-progress-note]");
+      const updateProgress=({percent=0,uploaded=0,total=file.size,method="standard"}={})=>{
+        if(progress)progress.hidden=false;
+        if(bar)bar.value=percent;
+        if(progressText)progressText.textContent=`${percent}%`;
+        if(progressNote)progressNote.textContent=`${formatBytes(uploaded)} / ${formatBytes(total)} · ${method==="resumable"?"upload ổn định cho file lớn":"upload thường"}`;
+        if(label?.childNodes?.[0])label.childNodes[0].textContent=`Đang tải audio… ${percent}%`;
+      };
+      if(label){label.classList.add("disabled");input.disabled=true;label.childNodes[0].textContent="Đang chuẩn bị audio…";}
+      if(progress){progress.hidden=false;if(bar)bar.value=0;if(progressText)progressText.textContent="0%";if(progressNote)progressNote.textContent=`${formatBytes(file.size)} · đang đọc thông tin file`;}
       let uploaded=null;
       try{
         const duration=await audioDuration(file);
-        uploaded=await uploadMedia(file,`tests/${test.id}/listening-master`);
+        uploaded=await uploadMedia(file,`tests/${test.id}/listening-master`,{onProgress:updateProgress});
         const {error}=await sb.rpc("staff_set_listening_audio_v118b",{p_test_id:test.id,p_storage_path:uploaded.storage_path,p_filename:file.name,p_duration_seconds:duration||null});
         if(error)throw error;
+        updateProgress({percent:100,uploaded:file.size,total:file.size,method:file.size>6*1024*1024?"resumable":"standard"});
+        if(progressNote)progressNote.textContent=`Hoàn tất · ${formatBytes(file.size)}`;
         toast("Đã lưu audio chung cho Listening Part 1–4");await onUpdated?.();
-      }catch(err){if(uploaded?.storage_path)removeMedia?.(uploaded.storage_path).catch(()=>{});toast(`Không tải được audio: ${err.message||err}`,7000);if(label){label.classList.remove("disabled");input.disabled=false;label.childNodes[0].textContent=oldText;}input.value="";}
+      }catch(err){
+        if(uploaded?.storage_path)removeMedia?.(uploaded.storage_path).catch(()=>{});
+        if(progress){progress.hidden=false;if(progressNote)progressNote.textContent="Tải audio chưa hoàn tất. Có thể chọn lại file để thử lại.";}
+        toast(`Không tải được audio: ${err.message||err}`,7000);
+        if(label){label.classList.remove("disabled");input.disabled=false;label.childNodes[0].textContent=oldText;}
+        input.value="";
+      }
     };
     const remove=document.querySelector("#removeListeningAudio");
     if(remove)remove.onclick=async()=>{
