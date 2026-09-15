@@ -1,0 +1,26 @@
+name: Source checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Architecture and feature contracts
+        run: node tools/check-source.mjs
+      - name: JavaScript syntax
+        run: find assets -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Bootstrap smoke
+        run: node tools/smoke-bootstrap.mjs
+      - name: V1.18 smoke
+        run: node tools/smoke-v118.mjs
+      - name: Audio pending-sync smoke
+        run: node tools/smoke-audio-sync.mjs
+      - name: Migration static check
+        run: node tools/check-migration.mjs

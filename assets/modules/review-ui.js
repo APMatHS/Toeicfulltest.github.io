@@ -1,3 +1,5 @@
+import { readJSON, writeJSON } from "./utils.js";
+
 const ENHANCED_ATTR="data-v113-review";
 let enhanceQueued=false;
 
@@ -5,13 +7,11 @@ function resultAttemptId(){
   const m=location.hash.match(/^#\/result\/([^/?#]+)/);
   return m?.[1]||"unknown";
 }
-function stateKey(){return `toeic.review.v1.13.${resultAttemptId()}`;}
-function readState(){
-  try{return JSON.parse(localStorage.getItem(stateKey())||"{}")||{};}catch{return {};}
-}
+function stateKey(){return `toeic.review.${resultAttemptId()}`;}
+function readState(){ return readJSON(stateKey(),{}); }
 function writeState(patch){
   const old=readState();
-  try{localStorage.setItem(stateKey(),JSON.stringify({...old,...patch,updated_at:Date.now()}));}catch{}
+  writeJSON(stateKey(),{...old,...patch,updated_at:Date.now()});
 }
 function parseMeta(article){
   const head=article.querySelector(".review-question-head");

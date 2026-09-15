@@ -1,0 +1,41 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {TEST_KINDS,testKindConfig} from '../assets/tests/test-kind.js';
+import {orderedListeningChoices} from '../assets/exam/listening/listening-view.js';
+import {buildPracticeQuestions} from '../assets/exam/practice-data.js';
+
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+assert.deepEqual(TEST_KINDS.listening.parts.map(x=>x.part_no),[1,2,3,4]);
+assert.deepEqual(TEST_KINDS.reading.parts.map(x=>x.part_no),[5,6,7]);
+assert.deepEqual(TEST_KINDS.full.parts.map(x=>x.part_no),[1,2,3,4,5,6,7]);
+assert.equal(testKindConfig('listening').parts[1].shuffle_choices,false);
+assert.equal(testKindConfig('listening').parts[2].shuffle_choices,true);
+
+const q={id:'q1',shuffle_choices:true,choices:['A','B','C','D'].map(key=>({key}))};
+const a=orderedListeningChoices(q,'attempt-1');
+const b=orderedListeningChoices(q,'attempt-1');
+assert.deepEqual(a,b,'choice shuffle must be deterministic per attempt');
+assert.deepEqual(a.map(x=>x.displayKey),['A','B','C','D'],'display labels must stay A-D after shuffle');
+assert.deepEqual([...a.map(x=>x.originalKey)].sort(),['A','B','C','D'],'grading keys must be preserved');
+const practiceQuestion=buildPracticeQuestions({parts:[{part_no:3,shuffle_choices:true}],questions:[{id:'p3q',part_no:3,source_number:32,source_order:1,choices:[{key:'A'},{key:'B'},{key:'C'},{key:'D'}]}],stimulus_groups:[]},[])[0];
+assert.equal(practiceQuestion.shuffle_choices,true,'staff practice must use the same choice-shuffle setting as students');
+
+const migration=fs.readFileSync(path.join(root,'supabase/migrations/v1.18_listening_full_test.sql'),'utf8');
+assert.ok(migration.includes('left join lateral'),'Full transition must resolve the same single audio unit that the frontend plays');
+for(const needle of ['test_kind','shuffle_choices','get_attempt_mode_v118','start_audio_unit_v118','complete_listening_phase_v118','staff_get_practice_audio_states_v118','staff_start_practice_audio_unit_v118','staff_update_practice_audio_unit_v118','staff_complete_practice_listening_v118','missing_listening_audio_questions',"'shuffle_choices',tp.shuffle_choices"]) assert.ok(migration.includes(needle),`migration missing ${needle}`);
+const authoring=fs.readFileSync(path.join(root,'assets/tests/authoring.js'),'utf8');
+assert.ok(authoring.includes('partNo===2?["A","B","C"]'), 'Part 2 must author exactly 3 choices');
+const exam=fs.readFileSync(path.join(root,'assets/app-exam.js'),'utf8');
+assert.ok(exam.includes('options.parts'), 'Reading app must support Full Test Part 5-7 filtering');
+const practice=fs.readFileSync(path.join(root,'assets/exam/listening/listening-practice.js'),'utf8');
+assert.ok(practice.includes('staff_complete_practice_listening_v118'),'staff Full Test must persist Listening completion');
+const audio=fs.readFileSync(path.join(root,'assets/exam/listening/audio-session.js'),'utf8');
+assert.ok(audio.includes('pending_sync')&&audio.includes('syncPending'),'audio completion must survive network loss');
+const view=fs.readFileSync(path.join(root,'assets/exam/listening/listening-view.js'),'utf8');
+assert.ok(view.includes('Hoàn thành Listening → Reading'),'Full Test must not expose early whole-test submit during Listening');
+assert.ok(view.includes('Number(q.part)>2&&q.content'),'Part 1-2 question transcript/text must stay hidden during Listening');
+const index=fs.readFileSync(path.join(root,'index.html'),'utf8');
+assert.ok(index.includes('styles/listening.css'), 'Listening stylesheet must be loaded');
+console.log('V1.18 smoke OK: kinds, deterministic choices, migration and integration contracts present.');

@@ -39,6 +39,9 @@ export function sanitizeRichHtml(html="",{storage=false}={}){
         if(!path){ child.remove(); continue; }
         keep["data-storage-path"]=path;
         keep.alt=child.getAttribute("alt")||"Ảnh trong nội dung";
+        // Giảm decode ảnh đồng loạt trên điện thoại yếu.
+        keep.loading="lazy";
+        keep.decoding="async";
         if(!storage && /^(https:|blob:)/i.test(src)) keep.src=src;
       }
       for(const a of [...child.attributes]) child.removeAttribute(a.name);
@@ -97,7 +100,7 @@ export function richEditorField(name,label,value="",{compact=false}={}){
       <button type="button" data-action="image">Ảnh</button>
       <button type="button" data-command="removeFormat">Xóa định dạng</button>
     </div>
-    <div class="rich-editor" contenteditable="true" role="textbox" aria-multiline="true">${safe}</div>
+    <div class="rich-editor" contenteditable="true" role="textbox" aria-multiline="true" spellcheck="true" lang="en">${safe}</div>
     <input type="file" class="rich-image-input" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
     <textarea name="${esc(name)}" hidden>${esc(sanitizeRichHtml(safe,{storage:true}))}</textarea>
   </div>`;
@@ -129,7 +132,7 @@ export function bindRichEditors(form,{uploadImage,onChange,onError}={}){
           current.removeAllRanges();
           current.addRange(savedRange);
         }
-        insertHtml(`<img data-storage-path="${esc(up.storage_path)}" src="${esc(up.url||"")}" alt="Ảnh trong nội dung"><br>`);
+        insertHtml(`<img data-storage-path="${esc(up.storage_path)}" src="${esc(up.url||"")}" alt="Ảnh trong nội dung" loading="lazy" decoding="async"><br>`);
         sync();
       }catch(err){ onError?.(err); }
       finally{field.classList.remove("busy");}

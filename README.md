@@ -1,20 +1,23 @@
-# TOEIC Full Test — V1.18
+# TOEIC Full Test — V1.18 Modular
+
+> **Modular source baseline:** Mã frontend đã được chuẩn hóa theo module chức năng. Không dùng file vá theo tên phiên bản. Chạy `node tools/check-source.mjs` trước khi deploy. Xem `docs/architecture.md` và `docs/refactor-modular.md`.
 
 
-## V1.18 — Listening & Full Test
+## V1.18 — Listening & Full Test trên nền modular
 
-- Tạo nhanh **Listening Part 1–4**, **Reading Part 5–7** hoặc **Full Test Part 1–7**.
-- Mặc định: Listening 20 phút, Reading 75 phút, Full Test 85 phút; mọi thời lượng/lượt làm/giờ mở-đóng đều chỉnh được.
-- Part 1–2 cố định câu và đáp án; Part 3–4 cố định câu/nhóm nhưng trộn lựa chọn theo từng lượt.
-- Audio Listening chạy ở module riêng: mỗi audio unit chỉ phát một lần, không pause/tua/nghe lại; trạng thái nghe lưu phía server và có local fallback để tiếp tục gần đúng vị trí mới nhất sau gián đoạn.
-- Full Test dùng module Listening riêng rồi chuyển về nguyên module Reading V1.17 cho Part 5–7.
-- Giữ nguyên chống gian lận và lưu offline hiện tại.
-- Cần chạy migration `supabase/migrations/v1.18_listening_full_test.sql`.
+- Thêm ba loại bài: **Listening Part 1–4**, **Reading Part 5–7**, **Full Test Part 1–7**.
+- Reading tiếp tục dùng nguyên luồng V1.17; Full Test chỉ lọc Part 5–7 khi chuyển sang Reading.
+- Listening dùng module riêng cho audio một lần, trạng thái audio phía server và local fallback khi gián đoạn.
+- Part 1–2 cố định; Part 3–4 có thể trộn lựa chọn ổn định theo từng lượt nhưng vẫn chấm bằng key gốc.
+- Part 1–2 không hiện transcript/nội dung câu hỏi hay nội dung lựa chọn trong màn hình làm bài để tránh lộ câu nghe.
+- Full Test hoàn thành Listening trước rồi mới chuyển sang Reading trong cùng một attempt và cùng deadline.
+- Audio phát xong lúc mất mạng được giữ `pending-sync` và đồng bộ lại trước khi chuyển pha/nộp bài.
+- Làm thử giảng viên dùng cùng giao diện/luật audio; Full Test làm thử giữ cùng một lượt từ Listening sang Reading.
+- Preflight kiểm tra cấu trúc Part, số lựa chọn (Part 2 = 3, Part khác = 4) và audio cho từng câu Listening trước khi Publish.
+- Cần chạy `supabase/migrations/v1.18_listening_full_test.sql` trước khi tạo Listening/Full Test. Reading cũ vẫn tương thích.
+- Source tiếp tục tuân thủ kiến trúc module chức năng; không có file JS vá theo tên phiên bản.
 
-Chi tiết: `docs/releases/V1.18.md`.
-
-
-
+Chi tiết: `docs/releases/V1.18.md`. Triển khai: `docs/deploy-v118.md`.
 
 ## V1.17 — Student Stability
 
@@ -104,8 +107,9 @@ V1.12 đồng bộ lớp học/tài khoản/thi thật/xuất điểm trước n
 
 ## Cấu trúc quan trọng
 
-- `assets/app.js` — giao diện, auth, thi, quản trị.
-- `assets/modules/anti-cheat.js` — chống gian lận V1.10.
+- `assets/app.js` — bootstrap/router/session; nghiệp vụ nằm trong module chức năng.
+- `assets/auth/`, `assets/staff/`, `assets/tests/`, `assets/exam/`, `assets/services/` — module theo miền chức năng.
+- `assets/modules/anti-cheat.js` — chống gian lận.
 - `supabase/migrations/v1.10_exam_integrity_and_review.sql` — backend thi V1.10.
 - `supabase/migrations/v1.11_password_recovery.sql` — schema/trigger mật khẩu V1.11.
 - `supabase/functions/manage-user/index.ts` — tạo user + sinh lại mật khẩu sinh viên.
@@ -124,6 +128,6 @@ V1.12 đồng bộ lớp học/tài khoản/thi thật/xuất điểm trước n
 > Lưu ý email: Supabase password recovery cần dịch vụ gửi email. Với triển khai thật, nên cấu hình SMTP riêng thay vì phụ thuộc email thử nghiệm mặc định.
 
 
-## Cấu trúc mã từ V1.14
+## Cấu trúc mã nguồn
 
-CSS được tổ chức tại `assets/styles/` theo nhóm chức năng; JavaScript dùng các module trong `assets/modules/`. Ghi chú phiên bản nằm trong `docs/releases/`.
+CSS và JavaScript được tổ chức theo **miền chức năng**, không theo phiên bản. Quy tắc và sơ đồ hiện tại nằm tại `docs/architecture.md`; ghi chú lịch sử vẫn ở `docs/releases/`.

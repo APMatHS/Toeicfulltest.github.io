@@ -1,11 +1,7 @@
+import { loadXlsx } from "../services/xlsx-service.js";
 import { formatScore10,scoreOutOfTen } from "./score-utils.js";
 
 export function createStaffResultsController({sb,esc,fmt,statusBadge,toast,getWorkspace,setLiveChannel,clearLiveChannel,refreshCurrentTest}){
-  let xlsxPromise=null;
-  function loadXlsx(){
-    xlsxPromise ||= import("https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs");
-    return xlsxPromise;
-  }
   async function renderPracticeTab(testId){
     const root=document.querySelector("#practiceRoot"); if(!root) return;
     const {data,error}=await sb.rpc("staff_list_practice_attempts",{p_test_id:testId});

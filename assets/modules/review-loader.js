@@ -1,7 +1,7 @@
 let loading=null;
 function maybeLoadReview(){
   if(!location.hash.startsWith("#/result/")) return;
-  loading ||= import("./review-ui.js?build=20260915-v117").catch(err=>{
+  loading ||= import("./review-ui.js").catch(err=>{
     console.error("Review UI load failed:",err);
     loading=null;
   });
