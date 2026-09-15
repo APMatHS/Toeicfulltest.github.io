@@ -1,7 +1,7 @@
 import { esc,go,readJSON,writeJSON,removeStorage } from "../../modules/utils.js";
 import { createAnswerQueue } from "../answer-queue.js";
 import { createExamMedia } from "../exam-media.js";
-import { createListeningAudio,questionAudioUnit } from "./audio-session.js";
+import { createListeningAudio } from "./audio-session.js";
 import { renderListeningView } from "./listening-view.js";
 
 export function createListeningExamApp(ctx){
@@ -25,20 +25,18 @@ export function createListeningExamApp(ctx){
   async function renderAttempt(attemptId,{mode="listening",onComplete=null}={}){
     const session=getSession(),profile=getProfile(),view=getView();if(!session||profile?.role!=="student")return go("/login");
     view.innerHTML='<section class="card">Đang tải Listening...</section>';
-    const {data,error}=await sb.rpc("get_attempt_payload",{p_attempt_id:attemptId});
-    if(error)return view.innerHTML=`<section class="card">${esc(error.message)}</section>`;
-    if(data?.attempt?.status!=="in_progress")return go(`/result/${attemptId}`);
-    const questions=(data.questions||[]).filter(q=>Number(q.part)>=1&&Number(q.part)<=4);
-    if(!questions.length)return view.innerHTML='<section class="card">Bài chưa có câu Listening.</section>';
-    data.questions=questions;const ui=readJSON(uiKey(attemptId),{current:0});
-    state={attemptId,payload:data,current:Math.min(ui.current||0,questions.length-1),saveStatus:"Đã lưu",audioStates:new Map(),activeAudio:null,mode,onComplete};
+    const [payloadRes,audioRes]=await Promise.all([sb.rpc("get_attempt_payload",{p_attempt_id:attemptId}),sb.rpc("get_listening_audio_v118b",{p_attempt_id:attemptId})]);
+    if(payloadRes.error)return view.innerHTML=`<section class="card">${esc(payloadRes.error.message)}</section>`;
+    if(audioRes.error)return view.innerHTML=`<section class="card"><h2>Listening chưa sẵn sàng</h2><p>${esc(audioRes.error.message)}</p><p class="muted">Giảng viên cần áp dụng migration V1.18b và tải file audio chung Part 1–4.</p></section>`;
+    const data=payloadRes.data;if(data?.attempt?.status!=="in_progress")return go(`/result/${attemptId}`);
+    const questions=(data.questions||[]).filter(q=>Number(q.part)>=1&&Number(q.part)<=4);if(!questions.length)return view.innerHTML='<section class="card">Bài chưa có câu Listening.</section>';
+    data.questions=questions;const ui=readJSON(uiKey(attemptId),{current:0}),meta=audioRes.data||{};
+    state={attemptId,payload:data,current:Math.min(ui.current||0,questions.length-1),saveStatus:"Đã lưu",audioStates:new Map(),activeAudio:null,mode,onComplete,listeningAudio:{path:meta.storage_path||null,filename:meta.filename||"Audio Listening Part 1–4",durationSeconds:Number(meta.duration_seconds||0)}};
     queue.merge(attemptId,questions);await audio.loadStates();await media.ensureQuestionMedia(questions[state.current]);draw();media.prefetchQuestion(state.current+1);startTimer();antiCheat?.bind();queue.flush();
   }
 
   async function moveTo(index){
-    if(!state||index<0||index>=state.payload.questions.length)return;
-    const target=state.payload.questions[index];if(state.activeAudio&&!audio.sameActiveUnit(target))return toast("Audio đang phát. Chỉ có thể chuyển giữa các câu dùng chung audio hiện tại.",5000);
-    saveAttemptUi();state.current=index;await media.ensureQuestionMedia(target);if(!state||state.current!==index)return;draw();media.prefetchQuestion(index+1);
+    if(!state||index<0||index>=state.payload.questions.length)return;saveAttemptUi();state.current=index;const target=state.payload.questions[index];await media.ensureQuestionMedia(target);if(!state||state.current!==index)return;draw();media.prefetchQuestion(index+1);
   }
 
   function saveCurrent(choice,marked){
@@ -48,9 +46,8 @@ export function createListeningExamApp(ctx){
   }
 
   function draw(){
-    if(!state)return;const view=getView();view.innerHTML=renderListeningView(state,{audio,media});
-    const q=state.payload.questions[state.current],unit=questionAudioUnit(q);
-    document.querySelector("#playListeningAudio")?.addEventListener("click",()=>audio.begin(unit,q));
+    if(!state)return;getView().innerHTML=renderListeningView(state,{audio,media});const q=state.payload.questions[state.current];
+    document.querySelector("#playListeningAudio")?.addEventListener("click",()=>audio.begin());
     document.querySelectorAll('input[name="answer"]').forEach(input=>input.onchange=()=>saveCurrent(input.value,!!q.marked));
     const mark=document.querySelector("#markListening");if(mark)mark.onchange=e=>saveCurrent(q.selected,!!e.target.checked);
     document.querySelector("#prevListening")?.addEventListener("click",()=>moveTo(state.current-1));
@@ -66,15 +63,14 @@ export function createListeningExamApp(ctx){
   function startTimer(){stopTimer();timerId=setInterval(updateTimer,1000);updateTimer();}
 
   async function completeListening(){
-    if(!state)return;if(state.activeAudio)return toast("Hãy chờ audio hiện tại phát xong trước khi hoàn thành Listening.",5000);
-    if(state.mode!=="full")return confirmSubmit();
-    await flushAnswerQueue();if(queue.read(state.attemptId).length||audio.hasPending())return toast("Còn đáp án hoặc trạng thái audio chưa đồng bộ. Hãy kiểm tra mạng rồi thử lại.",6000);
-    const {data,error}=await sb.rpc("complete_listening_phase_v118",{p_attempt_id:state.attemptId});if(error)return toast(error.message,6000);if(data?.blocked)return toast(`Chưa thể chuyển Reading: còn ${data.missing_audio_units||0} audio chưa phát xong.`,6000);
+    if(!state)return;if(state.activeAudio)return toast("Audio đang phát liên tục. Hãy chờ audio Part 1–4 phát hết.",5000);if(!audio.isCompleted())return toast("Cần nghe hết file audio chung Part 1–4 trước khi hoàn thành Listening.",6000);
+    if(state.mode!=="full")return confirmSubmit();await flushAnswerQueue();if(queue.read(state.attemptId).length||audio.hasPending())return toast("Còn đáp án hoặc trạng thái audio chưa đồng bộ. Hãy kiểm tra mạng rồi thử lại.",6000);
+    const {data,error}=await sb.rpc("complete_listening_phase_v118",{p_attempt_id:state.attemptId});if(error)return toast(error.message,6000);if(data?.blocked)return toast("Chưa thể chuyển Reading: audio chung Part 1–4 chưa được ghi nhận là đã phát hết.",6000);
     const id=state.attemptId,onComplete=state.onComplete;removeStorage(uiKey(id));resetExamState();return onComplete?.(id);
   }
 
   function confirmSubmit(){
-    if(!state)return;const unanswered=state.payload.questions.filter(q=>!q.selected).length;
+    if(!state)return;if(state.activeAudio||!audio.isCompleted())return toast("Hãy nghe hết file audio chung Part 1–4 trước khi nộp bài.",6000);const unanswered=state.payload.questions.filter(q=>!q.selected).length;
     modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal"><h2>Nộp bài?</h2><p>${unanswered?`Còn <b>${unanswered}</b> câu chưa chọn đáp án.`:"Bạn đã chọn đáp án cho tất cả câu."}</p><div class="row between"><button class="secondary" data-close>Tiếp tục làm</button><button class="danger" id="doSubmitListening">Nộp bài</button></div></div></div>`;
     modalRoot.querySelector("[data-close]").onclick=()=>modalRoot.innerHTML="";
     modalRoot.querySelector("#doSubmitListening").onclick=async()=>{const id=state.attemptId;await flushAnswerQueue();if(queue.read(id).length||audio.hasPending())return toast("Còn đáp án hoặc trạng thái audio chưa đồng bộ. Hãy kiểm tra mạng trước khi nộp bài.",6000);const {error}=await sb.rpc("submit_attempt",{p_attempt_id:id});if(error)return toast(error.message,6000);removeStorage(queue.queueKey(id));removeStorage(uiKey(id));antiCheat?.reset();resetExamState();modalRoot.innerHTML="";go(`/result/${id}`);};

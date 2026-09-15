@@ -1,12 +1,12 @@
 import { esc } from "../../modules/utils.js";
-import { questionAudioUnit } from "./audio-session.js";
 
 function stableHash(text){let h=2166136261;for(let i=0;i<text.length;i++){h^=text.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
 
 export function orderedListeningChoices(question,attemptId){
   const choices=(question.choices||[]).map(c=>({...c,originalKey:c.key}));
   if(!question.shuffle_choices)return choices.map(c=>({...c,displayKey:c.key}));
-  const labels=["A","B","C","D"];return choices.slice().sort((a,b)=>stableHash(`${attemptId}:${question.id}:${a.key}`)-stableHash(`${attemptId}:${question.id}:${b.key}`)).map((c,i)=>({...c,displayKey:labels[i]||c.key}));
+  const labels=["A","B","C","D"];
+  return choices.slice().sort((a,b)=>stableHash(`${attemptId}:${question.id}:${a.key}`)-stableHash(`${attemptId}:${question.id}:${b.key}`)).map((c,i)=>({...c,displayKey:labels[i]||c.key}));
 }
 
 function partGroups(questions){
@@ -37,14 +37,22 @@ function renderChoices(q,state,media){
   return orderedListeningChoices(q,state.attemptId).map(c=>`<label class="listening-choice ${q.selected===c.originalKey?"selected":""}"><input type="radio" name="answer" value="${esc(c.originalKey)}" ${q.selected===c.originalKey?"checked":""}><span class="choice-key">${esc(c.displayKey)}</span><span>${hideContent?'<span class="muted">Chọn đáp án</span>':`${c.content?media.renderRichText(c.content):""}${c.url?`<img loading="lazy" decoding="async" src="${esc(c.url)}" alt="Đáp án ${esc(c.displayKey)}">`:""}`}</span></label>`).join("");
 }
 
+function renderMasterAudio(state,audio){
+  const audioState=audio.stateFor(),playing=audio.isPlaying(),completed=audio.isCompleted(),hasFile=!!state.listeningAudio?.path;
+  const status=audioState?.completed_at==="pending_sync"?"Đã phát xong · chờ đồng bộ":completed?"Đã phát xong · không nghe lại":playing?"Đang phát liên tục Part 1–4":audioState?.started_at?"Bị gián đoạn · có thể tiếp tục từ vị trí đã lưu":"Chưa phát";
+  const buttonText=completed?"Đã phát xong":audioState?.started_at?"Tiếp tục sau gián đoạn":"Bắt đầu nghe";
+  const pos=Number(state.activeAudio?.lastPosition??audioState?.last_position_seconds??0),duration=Number(state.listeningAudio?.durationSeconds||0),progress=completed?1:(duration>0?Math.min(1,pos/duration):0);
+  return `<section class="card listening-master-audio"><div class="row between wrap"><div><div class="eyebrow">AUDIO LISTENING PART 1–4</div><h3>${esc(state.listeningAudio?.filename||"Audio chung Part 1–4")}</h3><div class="muted small">${hasFile?status:"Bài chưa có file audio chung."}</div></div><button class="primary" id="playListeningAudio" ${!hasFile||playing||completed?"disabled":""}>${esc(buttonText)}</button></div><progress id="listeningAudioProgress" max="1" value="${progress}"></progress><p class="muted small">Bấm một lần để nghe liên tục. Không pause, không tua, không nghe lại. Trong lúc audio chạy vẫn chuyển câu và chọn đáp án bình thường.</p></section>`;
+}
+
 export function renderListeningView(state,{audio,media}){
   const q=state.payload.questions[state.current];if(!q)return '<section class="card">Không có câu Listening.</section>';
-  const unit=questionAudioUnit(q),audioState=unit?audio.stateFor(unit.key):null,playing=audio.isPlaying(),parts=partGroups(state.payload.questions),answered=state.payload.questions.filter(x=>x.selected).length;
+  const parts=partGroups(state.payload.questions),answered=state.payload.questions.filter(x=>x.selected).length,completeReady=audio.isCompleted()&&!audio.hasPending();
   return `<section class="listening-shell">
     <div class="card listening-head"><div><div class="eyebrow">${state.preview?"LISTENING · LÀM THỬ":"LISTENING"}</div><h2>${esc(state.payload.attempt.test_title||"TOEIC Listening")}</h2></div><div class="listening-head-meta"><b id="listeningTimer">--:--</b><span id="listeningSaveStatus" data-kind="saved">${esc(state.saveStatus||"Đã lưu")}</span><span id="antiCheatStatus">${esc(antiCheatText(state))}</span></div></div>
+    ${renderMasterAudio(state,audio)}
     <div class="listening-layout"><main class="card listening-main"><div class="row between wrap"><span class="badge">Part ${q.part}</span><b>Câu ${q.number}</b></div>${renderQuestionMedia(q,media)}
-    ${unit?`<div class="listening-audio-box"><div><b>Audio</b><div class="muted small">${audioState?.completed_at==="pending_sync"?"Đã phát xong · chờ đồng bộ":audioState?.completed_at?"Đã phát xong · không nghe lại":state.activeAudio?.unitKey===unit.key?"Đang phát · không pause/tua":audioState?.started_at?"Có trạng thái nghe dở đã lưu":"Chưa phát"}</div></div><progress id="listeningAudioProgress" max="1" value="${audioState?.completed_at?1:0}"></progress><button class="primary" id="playListeningAudio" ${playing||audioState?.completed_at?"disabled":""}>${audioState?.completed_at?"Đã phát":audioState?.started_at?"Tiếp tục audio":"Bắt đầu audio"}</button></div>`:'<div class="warning-box">Câu/nhóm này chưa có audio. Giảng viên cần bổ sung trước khi Publish.</div>'}
     <div class="listening-choices">${renderChoices(q,state,media)}</div><div class="row between wrap listening-nav"><button class="secondary" id="prevListening" ${state.current===0?"disabled":""}>← Câu trước</button><label class="check-row"><input id="markListening" type="checkbox" ${q.marked?"checked":""}> Đánh dấu xem lại</label><button class="primary" id="nextListening">${state.current===state.payload.questions.length-1?"Hoàn thành Listening":"Câu tiếp →"}</button></div></main>
     <aside class="card listening-palette"><div class="row between"><h3>Câu hỏi</h3><span class="muted">${answered}/${state.payload.questions.length}</span></div>${parts.map(([p,qs])=>`<div class="listening-palette-part"><b>Part ${p}</b><div>${qs.map(x=>{const idx=state.payload.questions.indexOf(x);return `<button class="${idx===state.current?"active":""} ${x.selected?"answered":""} ${x.marked?"marked":""}" data-idx="${idx}">${x.number}</button>`;}).join("")}</div></div>`).join("")}</aside></div>
-    <div class="row end"><button class="${state.preview||state.mode==="full"?"primary":"danger"}" id="submitListening">${state.mode==="full"?"Hoàn thành Listening → Reading":state.preview?"Kết thúc làm thử":"Nộp bài"}</button></div></section>`;
+    <div class="row end"><button class="${state.preview||state.mode==="full"?"primary":"danger"}" id="submitListening" ${completeReady?"":"disabled"}>${state.mode==="full"?"Hoàn thành Listening → Reading":state.preview?"Kết thúc làm thử":"Nộp bài"}</button></div>${completeReady?"":'<p class="muted small listening-complete-hint">Nút hoàn thành sẽ mở sau khi file audio chung phát hết và trạng thái đã đồng bộ.</p>'}</section>`;
 }

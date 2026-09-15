@@ -31,7 +31,7 @@ assets/
 │  └─ listening/
 │     ├─ listening-exam.js        # lifecycle lượt Listening sinh viên
 │     ├─ listening-practice.js    # làm thử Listening/Full của giảng viên
-│     ├─ audio-session.js         # one-play audio + resume + pending-sync
+│     ├─ audio-session.js         # 1 audio chung Part 1–4 + one-play/resume/pending-sync
 │     └─ listening-view.js        # render UI Listening dùng chung
 │
 ├─ staff/
@@ -44,6 +44,7 @@ assets/
 │  ├─ test-create.js              # tạo/clone bài; chọn Listening/Reading/Full
 │  ├─ test-kind.js                # cấu hình Part và shuffle theo loại bài
 │  ├─ test-workspace.js           # workspace, settings, preflight, publish
+│  ├─ listening-audio-settings.js # tải/nghe thử 1 audio chung Part 1–4
 │  └─ authoring.js                # soạn đề + draft + editor actions
 │
 ├─ services/
@@ -68,9 +69,9 @@ assets/
 - `app.js` tạo shared context rồi khởi tạo các controller.
 - Controller không import vòng nhau; khi cần gọi controller khác thì nhận getter/callback từ `app.js`.
 - `app-exam.js` ghép queue, media và results cho Reading; `exam-coordinator.js` điều phối sang Listening khi cần.
-- Listening sinh viên tái sử dụng `answer-queue.js` và `exam-media.js`; làm thử giảng viên dùng cùng `listening-view.js`/`audio-session.js` để giao diện và luật audio không lệch nhau.
+- Listening sinh viên tái sử dụng `answer-queue.js` và `exam-media.js`; làm thử giảng viên dùng cùng `listening-view.js`/`audio-session.js`. Một unit cố định `listening:main` đại diện cho file audio chung Part 1–4.
 - Audio có hàng đợi `pending_sync` riêng: nếu phát xong đúng lúc mất mạng, trạng thái hoàn thành được giữ local và tự đồng bộ lại trước khi chuyển pha/nộp bài.
-- RPC Supabase/schema hiện tại không đổi do refactor này.
+- Refactor V1.17 không đổi schema; tính năng Listening dùng migration V1.18 và migration V1.18b cho `tests.listening_audio_*` và logic audio chung.
 
 ## Kiểm tra nguồn
 

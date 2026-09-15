@@ -7,14 +7,14 @@
 
 - Thêm ba loại bài: **Listening Part 1–4**, **Reading Part 5–7**, **Full Test Part 1–7**.
 - Reading tiếp tục dùng nguyên luồng V1.17; Full Test chỉ lọc Part 5–7 khi chuyển sang Reading.
-- Listening dùng module riêng cho audio một lần, trạng thái audio phía server và local fallback khi gián đoạn.
+- Listening Part 1–4 dùng **một file audio chung**: sinh viên bấm Bắt đầu nghe một lần, audio chạy liên tục từ đầu đến cuối; trạng thái nghe lưu phía server và có local fallback khi gián đoạn.
 - Part 1–2 cố định; Part 3–4 có thể trộn lựa chọn ổn định theo từng lượt nhưng vẫn chấm bằng key gốc.
 - Part 1–2 không hiện transcript/nội dung câu hỏi hay nội dung lựa chọn trong màn hình làm bài để tránh lộ câu nghe.
 - Full Test hoàn thành Listening trước rồi mới chuyển sang Reading trong cùng một attempt và cùng deadline.
 - Audio phát xong lúc mất mạng được giữ `pending-sync` và đồng bộ lại trước khi chuyển pha/nộp bài.
 - Làm thử giảng viên dùng cùng giao diện/luật audio; Full Test làm thử giữ cùng một lượt từ Listening sang Reading.
-- Preflight kiểm tra cấu trúc Part, số lựa chọn (Part 2 = 3, Part khác = 4) và audio cho từng câu Listening trước khi Publish.
-- Cần chạy `supabase/migrations/v1.18_listening_full_test.sql` trước khi tạo Listening/Full Test. Reading cũ vẫn tương thích.
+- Preflight kiểm tra cấu trúc Part, số lựa chọn (Part 2 = 3, Part khác = 4) và bắt buộc có **1 file audio chung Part 1–4** trước khi Publish.
+- Backend cần `supabase/migrations/v1.18_listening_full_test.sql`; sau đó chạy `supabase/migrations/v1.18b_single_listening_audio.sql` để bật mô hình **1 audio chung Part 1–4**. Nếu V1.18 đã chạy trước đó thì chỉ cần chạy V1.18b. Reading cũ vẫn tương thích.
 - Source tiếp tục tuân thủ kiến trúc module chức năng; không có file JS vá theo tên phiên bản.
 
 Chi tiết: `docs/releases/V1.18.md`. Triển khai: `docs/deploy-v118.md`.

@@ -87,5 +87,11 @@ export function createMediaService(sb){
     return Object.fromEntries((data||[]).filter(x=>x.signedUrl).map(x=>[x.path,x.signedUrl]));
   }
 
-  return {uploadMedia,signedUrl,signedUrlMap};
+  async function removeMedia(path){
+    if(!path) return;
+    const {error}=await sb.storage.from("test-media").remove([path]);
+    if(error) throw error;
+  }
+
+  return {uploadMedia,signedUrl,signedUrlMap,removeMedia};
 }

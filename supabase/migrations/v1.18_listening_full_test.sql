@@ -1,4 +1,5 @@
 -- TOEIC Full Test V1.18 Modular — Listening / Full Test
+-- Historical base migration. After this file, run v1.18b_single_listening_audio.sql; V1.18b replaces per-question audio-unit logic with one continuous Part 1–4 audio.
 -- Apply after the V1.17 backend. Existing Reading tests remain test_kind='reading'.
 
 alter table public.tests add column if not exists test_kind text not null default 'reading';

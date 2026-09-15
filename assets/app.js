@@ -16,7 +16,7 @@ import { createTestWorkspaceController } from "./tests/test-workspace.js";
 import { createAuthoringController } from "./tests/authoring.js";
 
 const sb=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);
-const {uploadMedia,signedUrl,signedUrlMap}=createMediaService(sb);
+const {uploadMedia,signedUrl,signedUrlMap,removeMedia}=createMediaService(sb);
 const appView=document.querySelector("#view");
 const sessionActions=document.querySelector("#sessionActions");
 const staffHeaderNav=document.querySelector("#staffHeaderNav");
@@ -102,7 +102,7 @@ examCoordinator.setAntiCheat(antiCheat);
 
 const staffResults=createStaffResultsController({sb,esc,fmt,statusBadge,toast,getWorkspace:()=>testState.workspace,setLiveChannel:channel=>{liveChannel=channel;},clearLiveChannel,refreshCurrentTest:(id,tab)=>testWorkspaceController.refreshCurrentTest(id,tab)});
 authoringController=createAuthoringController({sb,modalRoot,uploadMedia,signedUrl,signedUrlMap,toast,closeModal,getSession:()=>session,getWorkspaceController:()=>testWorkspaceController});
-testWorkspaceController=createTestWorkspaceController({sb,modalRoot,toast,closeModal,showLoading,staffNav,clearLiveChannel,invalidateStaffData,invalidateStaffPage,showStaffPage,getView:()=>view,getSession:()=>session,getStaffResults:()=>staffResults,getAuthoringController:()=>authoringController,testState});
+testWorkspaceController=createTestWorkspaceController({sb,modalRoot,toast,closeModal,showLoading,staffNav,clearLiveChannel,invalidateStaffData,invalidateStaffPage,showStaffPage,getView:()=>view,getSession:()=>session,getStaffResults:()=>staffResults,getAuthoringController:()=>authoringController,testState,uploadMedia,signedUrl,removeMedia});
 accountsController=createAccountsController({sb,modalRoot,toast,closeModal,showLoading,staffNav,prefetchStaffData,getStaffDataCache,invalidateStaffData,invalidateStaffPage,showStaffPage,getView:()=>view,getClassController:()=>classesController});
 classesController=createClassesController({sb,modalRoot,toast,closeModal,showLoading,staffNav,prefetchStaffData,getStaffDataCache,invalidateStaffData,invalidateStaffPage,showStaffPage,getView:()=>view,getSession:()=>session,getAccountsController:()=>accountsController});
 const dashboard=createDashboardController({showLoading,staffNav,prefetchStaffData,getStaffDataCache,getView:()=>view,getProfile:()=>profile});
