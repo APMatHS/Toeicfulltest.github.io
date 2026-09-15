@@ -1,4 +1,19 @@
-# TOEIC Full Test — V1.17
+# TOEIC Full Test — V1.18
+
+
+## V1.18 — Listening & Full Test
+
+- Tạo nhanh **Listening Part 1–4**, **Reading Part 5–7** hoặc **Full Test Part 1–7**.
+- Mặc định: Listening 20 phút, Reading 75 phút, Full Test 85 phút; mọi thời lượng/lượt làm/giờ mở-đóng đều chỉnh được.
+- Part 1–2 cố định câu và đáp án; Part 3–4 cố định câu/nhóm nhưng trộn lựa chọn theo từng lượt.
+- Audio Listening chạy ở module riêng: mỗi audio unit chỉ phát một lần, không pause/tua/nghe lại; trạng thái nghe lưu phía server và có local fallback để tiếp tục gần đúng vị trí mới nhất sau gián đoạn.
+- Full Test dùng module Listening riêng rồi chuyển về nguyên module Reading V1.17 cho Part 5–7.
+- Giữ nguyên chống gian lận và lưu offline hiện tại.
+- Cần chạy migration `supabase/migrations/v1.18_listening_full_test.sql`.
+
+Chi tiết: `docs/releases/V1.18.md`.
+
+
 
 
 ## V1.17 — Student Stability
