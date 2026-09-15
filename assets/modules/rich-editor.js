@@ -1,4 +1,4 @@
-import { esc } from "./utils.js";
+import { esc } from "./utils.js?build=20260915-v117";
 
 const ALLOWED=new Set(["P","DIV","BR","STRONG","B","EM","I","U","S","UL","OL","LI","A","TABLE","THEAD","TBODY","TR","TH","TD","IMG"]);
 const DROP=new Set(["SCRIPT","STYLE","IFRAME","OBJECT","EMBED","FORM","INPUT","BUTTON","SVG","MATH"]);
@@ -39,6 +39,9 @@ export function sanitizeRichHtml(html="",{storage=false}={}){
         if(!path){ child.remove(); continue; }
         keep["data-storage-path"]=path;
         keep.alt=child.getAttribute("alt")||"Ảnh trong nội dung";
+        // V1.17: giảm decode ảnh đồng loạt trên điện thoại yếu.
+        keep.loading="lazy";
+        keep.decoding="async";
         if(!storage && /^(https:|blob:)/i.test(src)) keep.src=src;
       }
       for(const a of [...child.attributes]) child.removeAttribute(a.name);
@@ -129,7 +132,7 @@ export function bindRichEditors(form,{uploadImage,onChange,onError}={}){
           current.removeAllRanges();
           current.addRange(savedRange);
         }
-        insertHtml(`<img data-storage-path="${esc(up.storage_path)}" src="${esc(up.url||"")}" alt="Ảnh trong nội dung"><br>`);
+        insertHtml(`<img data-storage-path="${esc(up.storage_path)}" src="${esc(up.url||"")}" alt="Ảnh trong nội dung" loading="lazy" decoding="async"><br>`);
         sync();
       }catch(err){ onError?.(err); }
       finally{field.classList.remove("busy");}

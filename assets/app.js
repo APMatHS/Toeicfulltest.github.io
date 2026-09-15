@@ -1,18 +1,17 @@
 
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
-import * as XLSX from "https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs";
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js";
-import { esc,fmt,route,go,roleLabel,statusBadge,readJSON,writeJSON,debounce } from "./modules/utils.js";
-import { createMediaService } from "./modules/media.js";
+import { esc,fmt,route,go,roleLabel,statusBadge,readJSON,writeJSON,debounce } from "./modules/utils.js?build=20260915-v117";
+import { createMediaService } from "./modules/media.js?build=20260915-v117";
 import { bindAuthoringFilter,renderAuthoringMarkup } from "./modules/authoring-view.js";
 import { createAntiCheatController } from "./modules/anti-cheat.js";
-import { createExamApp } from "./app-exam.js";
+import { createExamApp } from "./app-exam.js?build=20260915-v117";
 import { loadAttemptCounts,renderStaffTestsTable } from "./modules/staff-tests.js";
-import { createStaffResultsController } from "./modules/staff-results.js";
+import { createStaffResultsController } from "./modules/staff-results.js?build=20260915-v117";
 import {
   bindRichEditors,embeddedImagePaths,hydrateEmbeddedImages,
   renderRichText,richEditorField,sanitizeRichHtml
-} from "./modules/rich-editor.js";
+} from "./modules/rich-editor.js?build=20260915-v117";
 
 const recoveryUrlHint = /(?:^|[&#])type=recovery(?:&|$)/.test(location.hash);
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
@@ -88,7 +87,7 @@ function clearLiveChannel(){
   if(liveChannel){ try{ sb.removeChannel(liveChannel); }catch{} liveChannel=null; }
 }
 const staffResults=createStaffResultsController({
-  sb,XLSX,esc,fmt,statusBadge,toast,
+  sb,esc,fmt,statusBadge,toast,
   getWorkspace:()=>testWorkspace,
   setLiveChannel:channel=>{liveChannel=channel;},
   clearLiveChannel,

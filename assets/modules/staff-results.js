@@ -1,6 +1,11 @@
 import { formatScore10,scoreOutOfTen } from "./score-utils.js";
 
-export function createStaffResultsController({sb,XLSX,esc,fmt,statusBadge,toast,getWorkspace,setLiveChannel,clearLiveChannel,refreshCurrentTest}){
+export function createStaffResultsController({sb,esc,fmt,statusBadge,toast,getWorkspace,setLiveChannel,clearLiveChannel,refreshCurrentTest}){
+  let xlsxPromise=null;
+  function loadXlsx(){
+    xlsxPromise ||= import("https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs");
+    return xlsxPromise;
+  }
   async function renderPracticeTab(testId){
     const root=document.querySelector("#practiceRoot"); if(!root) return;
     const {data,error}=await sb.rpc("staff_list_practice_attempts",{p_test_id:testId});
@@ -59,7 +64,10 @@ export function createStaffResultsController({sb,XLSX,esc,fmt,statusBadge,toast,
   }
 
   async function exportTestExcel(testId){
-    toast("Đang tạo Excel…"); const {data,error}=await sb.rpc("staff_get_test_export",{p_test_id:testId});if(error)return toast(error.message,6000);const students=data.students||[];
+    toast("Đang tạo Excel…");
+    let XLSX;
+    try{ XLSX=await loadXlsx(); }catch(err){ console.error(err); return toast("Không tải được thư viện Excel. Hãy kiểm tra mạng và thử lại.",6000); }
+    const {data,error}=await sb.rpc("staff_get_test_export",{p_test_id:testId});if(error)return toast(error.message,6000);const students=data.students||[];
     const summary=students.map((s,i)=>({STT:i+1,"Họ tên":s.full_name,MSSV:s.student_code||"","Lần làm":s.attempt_no||"","Trạng thái":s.status||"Chưa làm","Bắt đầu":s.started_at?new Date(s.started_at).toLocaleString("vi-VN"):"","Nộp bài":s.submitted_at?new Date(s.submitted_at).toLocaleString("vi-VN"):"","Số câu đúng":s.correct_count??"","Điểm /10":s.correct_count==null?"":scoreOutOfTen(s.correct_count,(s.answers||[]).length||100),"Vi phạm":s.violation_count||0,"Lý do nộp":s.submission_reason||""}));
     const detail=[];for(const s of students)for(const a of s.answers||[])detail.push({"Họ tên":s.full_name,MSSV:s.student_code||"","Lần làm":s.attempt_no||"","Câu":a.number,"Đã chọn":a.selected||"","Đáp án":a.correct||"","Đúng/Sai":a.is_correct?"Đúng":"Sai"});
     const violations=[];for(const s of students)for(const v of s.violations||[])violations.push({"Họ tên":s.full_name,MSSV:s.student_code||"","Lần làm":s.attempt_no||"","Sự kiện":v.event_type,"Lần":v.violation_number,"Thời điểm":new Date(v.occurred_at).toLocaleString("vi-VN")});

@@ -1,4 +1,17 @@
-# TOEIC Full Test — V1.16
+# TOEIC Full Test — V1.17
+
+
+## V1.17 — Student Stability
+
+- Chống lỗi `localStorage` làm dừng giao diện/nộp bài; có fallback in-memory.
+- Compact queue đáp án và chống race khi request lưu trước còn đang chạy.
+- Khi mở bài chỉ hydrate media của câu hiện tại; prefetch câu kế tiếp lúc browser rảnh.
+- Ảnh upload mới được resize/nén WebP khi cần; ảnh render dùng lazy/async decode.
+- SheetJS/XLSX chỉ tải khi giảng viên xuất Excel; review UI chỉ tải ở trang kết quả.
+- Giữ nguyên toàn bộ quy tắc chống gian lận V1.16.
+- **Không cần migration Supabase mới.**
+
+Chi tiết: `docs/releases/V1.17.md`.
 
 
 ## V1.16 — chỉ tính vi phạm khi rời phần kiểm tra
