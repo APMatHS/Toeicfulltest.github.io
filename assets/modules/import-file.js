@@ -1,18 +1,31 @@
 import { esc } from "./utils.js";
 
 let mammothPromise=null,xlsxPromise=null;
-const loadMammoth=async()=>{
-  if(!mammothPromise)mammothPromise=import("https://cdn.jsdelivr.net/npm/mammoth@1.8.0/+esm");
-  const mod=await mammothPromise;
-  return mod?.extractRawText?mod:(mod?.default?.extractRawText?mod.default:mod);
-};
-const loadXlsx=async()=>{
-  if(!xlsxPromise)xlsxPromise=import("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm");
-  const mod=await xlsxPromise;
-  const api=mod?.read&&mod?.utils?mod:(mod?.default?.read&&mod?.default?.utils?mod.default:mod);
-  if(typeof api?.read!=="function"||!api?.utils)throw new Error("Không tải được thư viện đọc Excel.");
-  return api;
-};
+
+function loadScriptOnce(src,globalName){
+  const existing=window[globalName];
+  if(existing)return Promise.resolve(existing);
+  return new Promise((resolve,reject)=>{
+    const old=[...document.scripts].find(x=>x.src===src);
+    const finish=()=>{
+      const api=window[globalName];
+      if(api)resolve(api);else reject(new Error(`Đã tải ${globalName} nhưng không khởi tạo được thư viện.`));
+    };
+    if(old){
+      if(window[globalName])return resolve(window[globalName]);
+      old.addEventListener("load",finish,{once:true});
+      old.addEventListener("error",()=>reject(new Error(`Không tải được ${globalName}.`)),{once:true});
+      return;
+    }
+    const script=document.createElement("script");
+    script.src=src;script.async=true;
+    script.onload=finish;
+    script.onerror=()=>reject(new Error(`Không tải được ${globalName}. Kiểm tra kết nối mạng/CDN.`));
+    document.head.appendChild(script);
+  });
+}
+const loadMammoth=()=>mammothPromise||(mammothPromise=loadScriptOnce("https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js","mammoth"));
+const loadXlsx=()=>xlsxPromise||(xlsxPromise=loadScriptOnce("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js","XLSX"));
 const clean=s=>String(s??"").replace(/\u00a0/g," ").replace(/\s+/g," ").trim();
 const safe=s=>esc(clean(s));
 
@@ -72,7 +85,9 @@ function assess(q,answer){
 }
 
 export async function readToeicImportFiles(questionFile,answerFile){
-  const [questions,answers]=await Promise.all([readDocx(questionFile),readAnswers(answerFile)]);
+  let questions,answers;
+  try{questions=await readDocx(questionFile);}catch(err){throw new Error(`Lỗi đọc Word: ${err?.message||err}`);}
+  try{answers=await readAnswers(answerFile);}catch(err){throw new Error(`Lỗi đọc Excel: ${err?.message||err}`);}
   if(!questions.length)throw new Error("Không nhận diện được câu hỏi nào trong file Word.");
   const seen=new Set(),rows=questions.filter(q=>{if(seen.has(q.number))return false;seen.add(q.number);return true;}).sort((a,b)=>a.number-b.number).map(q=>({...q,answer:answers[q.number]||null,issues:assess(q,answers[q.number])}));
   return {rows,answers};
