@@ -14,7 +14,7 @@ const MAX_SOURCE_IMAGE_BYTES=20*1024*1024;
 const MAX_IMAGE_EDGE=2000;
 const TARGET_IMAGE_BYTES=2.5*1024*1024;
 const STANDARD_AUDIO_UPLOAD_BYTES=6*1024*1024;
-export const MAX_AUDIO_UPLOAD_BYTES=45*1024*1024;
+export const MAX_AUDIO_UPLOAD_BYTES=50*1024*1024;
 const TUS_CHUNK_BYTES=6*1024*1024;
 let tusPromise=null;
 
@@ -114,7 +114,7 @@ export function createMediaService(sb){
     const kind=mediaTypeFromFile(file);
     if(!kind) throw new Error("Chỉ hỗ trợ ảnh hoặc âm thanh.");
     if(kind==="audio" && file.size>MAX_AUDIO_UPLOAD_BYTES){
-      throw new Error("Audio quá lớn. Vui lòng dùng file không quá 45 MB.");
+      throw new Error("Audio quá lớn. Vui lòng dùng file không quá 50 MB.");
     }
     const prepared=kind==="image" ? await optimizeImage(file) : file;
     const path=`${prefix}/${crypto.randomUUID()}${fileExt(prepared.name)}`;

@@ -3,6 +3,15 @@
 .exam-main{align-self:start;align-content:start;grid-auto-rows:max-content}
 .exam-side{align-self:start}
 .exam-toolbar{align-items:center}
+
+/* Question typography: keep the prompt visually stronger than the choices,
+   especially in Listening where the answer options are short and prominent. */
+.question-title{font-size:1.1rem;font-weight:700;line-height:1.55}
+.question-title>.rich-content{font:inherit;font-weight:700}
+.question-title>.rich-content p{font:inherit;font-weight:700}
+.choice{font-size:1rem;font-weight:500}
+.choice .rich-content,.choice .rich-content p{font-size:inherit;font-weight:500}
+
 .anti-cheat-overlay{background:rgba(15,23,42,.58);-webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px)}
 .anti-cheat-panel{width:min(620px,100%)}
 .anti-cheat-count-wrap{display:grid;justify-items:center}
