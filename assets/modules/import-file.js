@@ -37,18 +37,40 @@ function inferPart(number,currentPart){
 
 function parseQuestionText(text){
   const lines=String(text||"").split(/\r?\n/).map(clean).filter(Boolean);
-  const out=[];let part=0,q=null,lastChoice=null;
-  const push=()=>{if(q){q.content=clean(q.content);q.choices=Object.fromEntries(Object.entries(q.choices).map(([k,v])=>[k,clean(v)]));out.push(q);}q=null;lastChoice=null;};
+  const out=[],directions={};let part=0,q=null,lastChoice=null,preamble=[];
+  const flushPreamble=()=>{
+    if(part&&preamble.length&&!directions[part])directions[part]=clean(preamble.join(" "));
+    preamble=[];
+  };
+  const push=()=>{
+    if(q){
+      q.content=clean(q.content);
+      q.choices=Object.fromEntries(Object.entries(q.choices).map(([k,v])=>[k,clean(v)]));
+      out.push(q);
+    }
+    q=null;lastChoice=null;
+  };
   for(const line of lines){
-    const pm=line.match(/^PART\s*([1-7])\b/i);if(pm){push();part=+pm[1];continue;}
-    const qm=line.match(/^(\d{1,3})\s*[.)]\s*(.*)$/);if(qm){push();const number=+qm[1];q={number,part:inferPart(number,part),content:qm[2]||"",choices:{}};continue;}
-    if(!q)continue;
+    const pm=line.match(/^PART\s*([1-7])\b/i);
+    if(pm){push();flushPreamble();part=+pm[1];continue;}
+    const qm=line.match(/^(\d{1,3})\s*[.)]\s*(.*)$/);
+    if(qm){
+      push();flushPreamble();
+      const number=+qm[1];
+      q={number,part:inferPart(number,part),content:qm[2]||"",choices:{}};
+      continue;
+    }
+    if(!q){
+      if(part&&!/^This is the end\b/i.test(line))preamble.push(line);
+      continue;
+    }
     if(/^This is the end\b/i.test(line))continue;
     const cm=line.match(/^\(?([A-D])\)?\s*[.)]?\s+(.+)$/i);
     if(cm){lastChoice=cm[1].toUpperCase();q.choices[lastChoice]=cm[2];continue;}
     if(lastChoice)q.choices[lastChoice]+=` ${line}`;else q.content+=`${q.content?" ":""}${line}`;
   }
-  push();return out.filter(x=>Number.isInteger(x.number)&&x.number>0);
+  push();flushPreamble();
+  return {questions:out.filter(x=>Number.isInteger(x.number)&&x.number>0),directions};
 }
 
 async function readDocx(file){
@@ -76,21 +98,23 @@ async function readAnswers(file){
 
 function assess(q,answer){
   const issues=[],keys=Object.keys(q.choices||{}),expected=q.part===2?3:4;
-  if(!q.content)issues.push("Thiếu nội dung câu");
+  // TOEIC Part 1–2: statements/responses nằm trong audio, nên không bắt buộc text choices.
+  if(q.part>=3&&!q.content)issues.push("Thiếu nội dung câu");
   if(q.part>=3&&keys.length!==expected)issues.push(`Nhận ${keys.length}/${expected} lựa chọn`);
-  if(q.part<=2&&keys.length===0)issues.push("Chưa có nội dung lựa chọn");
+  if(q.part===1)issues.push("Cần bổ sung hình");
   if(!answer)issues.push("Thiếu đáp án");
-  if(/\blook at the (graphic|picture|image|map|chart|schedule|form|table)\b/i.test(q.content))issues.push("Cần bổ sung hình");
-  return issues;
+  if(q.part>=3&&/\blook at the (graphic|picture|image|map|chart|schedule|form|table)\b/i.test(q.content))issues.push("Cần bổ sung hình");
+  return [...new Set(issues)];
 }
 
 export async function readToeicImportFiles(questionFile,answerFile){
-  let questions,answers;
-  try{questions=await readDocx(questionFile);}catch(err){throw new Error(`Lỗi đọc Word: ${err?.message||err}`);}
+  let parsedDocx,answers;
+  try{parsedDocx=await readDocx(questionFile);}catch(err){throw new Error(`Lỗi đọc Word: ${err?.message||err}`);}
   try{answers=await readAnswers(answerFile);}catch(err){throw new Error(`Lỗi đọc Excel: ${err?.message||err}`);}
+  const questions=parsedDocx?.questions||[];
   if(!questions.length)throw new Error("Không nhận diện được câu hỏi nào trong file Word.");
   const seen=new Set(),rows=questions.filter(q=>{if(seen.has(q.number))return false;seen.add(q.number);return true;}).sort((a,b)=>a.number-b.number).map(q=>({...q,answer:answers[q.number]||null,issues:assess(q,answers[q.number])}));
-  return {rows,answers};
+  return {rows,answers,directions:parsedDocx?.directions||{}};
 }
 
 export function inferTestKind(rows){
@@ -107,10 +131,17 @@ export function renderImportPreview(rows){
   return `<div class="stack"><div class="row wrap"><span class="status ok">${ok} câu OK</span><span class="status warn">${review} cần kiểm tra</span><span class="badge">${answers}/${rows.length} đáp án</span></div><div class="muted small">${Object.entries(counts).sort((a,b)=>a[0]-b[0]).map(([p,n])=>`Part ${p}: ${n}`).join(" · ")}</div><div style="max-height:320px;overflow:auto">${rows.map(r=>`<div style="padding:8px 0;border-top:1px solid var(--line)"><b>Câu ${r.number} · Part ${r.part}</b> <span class="badge">${safe(r.answer||"—")}</span><div class="small">${safe(r.content||"(không nhận được nội dung)")}</div>${r.issues.length?`<div class="small">${r.issues.map(x=>`<span class="status warn">${safe(x)}</span>`).join(" ")}</div>`:""}</div>`).join("")}</div></div>`;
 }
 
-export async function importQuestionsIntoTest(sb,testId,rows,kind,onProgress){
+export async function importQuestionsIntoTest(sb,testId,rows,kind,onProgress,directions={}){
   const {data:parts,error}=await sb.from("test_parts").select("id,part_no").eq("test_id",testId);
   if(error)throw error;
   const partMap=Object.fromEntries((parts||[]).map(p=>[Number(p.part_no),p.id])),allowed=new Set(kind==="listening"?[1,2,3,4]:kind==="reading"?[5,6,7]:[1,2,3,4,5,6,7]);
+  for(const [partNo,text] of Object.entries(directions||{})){
+    const partId=partMap[Number(partNo)];
+    if(partId&&clean(text)){
+      const {error:directionError}=await sb.from("test_parts").update({directions:clean(text)}).eq("id",partId);
+      if(directionError)throw new Error(`Không lưu được Directions Part ${partNo}: ${directionError.message}`);
+    }
+  }
   const todo=rows.filter(r=>allowed.has(r.part)),failed=[];let done=0;
   for(const r of todo){
     const partId=partMap[r.part];if(!partId){failed.push(`Câu ${r.number}: thiếu Part ${r.part}`);onProgress?.({done,total:todo.length,failed});continue;}

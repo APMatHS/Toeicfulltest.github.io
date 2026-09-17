@@ -97,7 +97,7 @@ export function createTestCreateController(ctx){
         const {data,error}=await sb.rpc("staff_upsert_test",{p_data:f});if(error)throw error;testId=typeof data==="string"?data:(data?.id||data?.test_id);if(!testId)throw new Error("Backend không trả về mã bài kiểm tra.");
         await createPartsForKind(sb,testId,parsed.kind);
         btn.textContent="Đang nhập câu hỏi…";
-        const result=await importQuestionsIntoTest(sb,testId,parsed.rows,parsed.kind,p=>{btn.textContent=`Đang nhập ${p.done}/${p.total}…`;});
+        const result=await importQuestionsIntoTest(sb,testId,parsed.rows,parsed.kind,p=>{btn.textContent=`Đang nhập ${p.done}/${p.total}…`;},parsed.directions);
         invalidate();closeModal();toast(result.failed.length?`Đã tạo bài và nhập ${result.done} câu; ${result.failed.length} câu chưa lưu.`:`Đã tạo bài và nhập ${result.done} câu.`,7000);go(`/test/${testId}/authoring`);
       }catch(err){console.error(err);toast(`Không nhập được đề: ${err.message||err}${testId?" · Bài nháp đã được tạo; có thể mở lại để kiểm tra.":""}`,8000);btn.disabled=false;btn.textContent="Tạo bài và nhập câu hỏi";}
     };

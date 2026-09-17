@@ -1,12 +1,6 @@
-FIX 3 – Nhập Word + Excel
-
-Chỉ ghi đè:
-assets/modules/import-file.js
-
-Nguyên nhân sửa:
-- Không dùng Mammoth qua jsDelivr +esm nữa.
-- Mammoth chính thức có browser bundle riêng; dùng mammoth.browser.min.js.
-- XLSX dùng browser bundle xlsx.full.min.js.
-- Thêm lỗi riêng “Lỗi đọc Word” / “Lỗi đọc Excel” để xác định chính xác nếu còn lỗi.
-
-Không thay test-create.js và không đụng các chức năng khác.
+FIX 4 – TOEIC-aware import
+- Directions giữa PART n và câu đầu tiên được lưu vào test_parts.directions.
+- Part 1/2 không còn bị báo lỗi vì không có text choices.
+- Part 1 được đánh dấu cần bổ sung hình.
+- Đáp án Excel tiếp tục gắn correct_choice_key từng câu.
+- Supabase production đã thêm cột directions.
