@@ -1,21 +1,20 @@
-TOEIC - nâng cấp "Nhập từ file" (2026-09-17)
+# TOEIC – sửa đúng luồng Tạo bài kiểm tra → Nhập từ file
 
-Chép lên GitHub đúng các đường dẫn:
-- index.html
-- assets/modules/import-file.js   (file mới)
-- supabase/migrations/20260917_allow_incomplete_imported_questions.sql
+Thay đúng 2 file:
+- assets/tests/test-create.js
+- assets/modules/import-file.js
 
-Supabase production đã áp dụng migration allow_incomplete_imported_questions.
-Không cần chạy SQL lại nếu đang dùng project ul... hiện tại.
+Không cần sửa index.html. Importer cũ gắn ở màn hình Soạn đề đã được loại khỏi module import-file.js.
 
 Luồng mới:
-1. Soạn đề -> Nhập từ file.
-2. Chọn Word .docx (chỉ chữ) + Excel đáp án.
-3. Web nhận PART, số câu, nội dung và A/B/C/D; ghép đáp án theo số câu.
-4. Xem trước số câu OK / cần kiểm tra / đã có.
-5. Lưu tất cả câu nhận diện được; câu chưa đủ vẫn lưu và UI hiện "Cần kiểm tra".
-6. Câu đã tồn tại không bị ghi đè.
-7. Không nhập ảnh/audio. Giảng viên bổ sung sau.
+1. Chọn file đề .docx
+2. Chọn file đáp án .xlsx/.xls
+3. Đọc file và xem trước
+4. Tự nhận diện Listening / Reading / Full Test từ Part
+5. Tạo bài nháp và Part
+6. Lưu mọi câu nhận diện được; câu thiếu dữ liệu vẫn lưu nếu backend cho phép đáp án NULL
+7. Mở màn hình Soạn đề để giảng viên chỉnh tiếp
 
-Đã kiểm tra file mẫu TOEIC Test 6: parser theo cấu trúc nhận đủ 100 câu,
-Part 1=6, Part 2=25, Part 3=39, Part 4=30. Excel mẫu có 100 đáp án.
+Không đụng Tạo thủ công, Từ bài kiểm tra cũ, audio, anti-cheat, submissions.
+
+Lưu ý: Supabase production trước đó đã được nới questions.correct_choice_key cho phép NULL.

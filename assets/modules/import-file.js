@@ -1,13 +1,10 @@
-import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
-import { SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY } from "../config.js";
 import { esc } from "./utils.js";
 
-const sb=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);
 let mammothPromise=null,xlsxPromise=null;
 const loadMammoth=()=>mammothPromise||(mammothPromise=import("https://cdn.jsdelivr.net/npm/mammoth@1.8.0/+esm"));
 const loadXlsx=()=>xlsxPromise||(xlsxPromise=import("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm"));
 const clean=s=>String(s??"").replace(/\u00a0/g," ").replace(/\s+/g," ").trim();
-const rich=s=>esc(clean(s));
+const safe=s=>esc(clean(s));
 
 function inferPart(number,currentPart){
   if(currentPart>=1&&currentPart<=7)return currentPart;
@@ -28,26 +25,24 @@ function parseQuestionText(text){
     if(cm){lastChoice=cm[1].toUpperCase();q.choices[lastChoice]=cm[2];continue;}
     if(lastChoice)q.choices[lastChoice]+=` ${line}`;else q.content+=`${q.content?" ":""}${line}`;
   }
-  push();
-  return out.filter(x=>Number.isInteger(x.number)&&x.number>0);
+  push();return out.filter(x=>Number.isInteger(x.number)&&x.number>0);
 }
 
 async function readDocx(file){
-  const mammoth=await loadMammoth(),buf=await file.arrayBuffer();
-  const result=await mammoth.extractRawText({arrayBuffer:buf});
+  if(!file||!/\.docx$/i.test(file.name))throw new Error("File đề phải là .docx.");
+  const mammoth=await loadMammoth(),buf=await file.arrayBuffer(),result=await mammoth.extractRawText({arrayBuffer:buf});
   return parseQuestionText(result.value||"");
 }
 
 async function readAnswers(file){
+  if(!file||!/\.(xlsx|xls)$/i.test(file.name))throw new Error("File đáp án phải là .xlsx hoặc .xls.");
   const XLSX=await loadXlsx(),buf=await file.arrayBuffer(),wb=XLSX.read(buf,{type:"array"}),map={};
   for(const name of wb.SheetNames){
     const rows=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,defval:""});
     for(const row of rows){
       for(let i=0;i<row.length;i++){
         const n=Number(String(row[i]).trim());if(!Number.isInteger(n)||n<1||n>999)continue;
-        for(let j=i+1;j<Math.min(row.length,i+4);j++){
-          const a=clean(row[j]).toUpperCase();if(/^[A-D]$/.test(a)){map[n]=a;break;}
-        }
+        for(let j=i+1;j<Math.min(row.length,i+4);j++){const a=clean(row[j]).toUpperCase();if(/^[A-D]$/.test(a)){map[n]=a;break;}}
       }
     }
   }
@@ -64,54 +59,40 @@ function assess(q,answer){
   return issues;
 }
 
-function modalHtml(rows,existing){
-  const ok=rows.filter(r=>!r.issues.length&&!existing.has(r.number)).length,review=rows.filter(r=>r.issues.length&&!existing.has(r.number)).length,skip=rows.filter(r=>existing.has(r.number)).length;
-  return `<div class="modal-backdrop"><div class="modal wide import-file-modal"><div class="row between wrap"><div><h2>Nhập đề từ file</h2><p class="muted">Chỉ nhập phần chữ và đáp án. Câu chưa hoàn chỉnh vẫn được lưu và đánh dấu để giảng viên sửa sau.</p></div><button class="ghost sm" data-close>Đóng</button></div>
-    <div class="import-summary"><span class="status ok">${ok} câu OK</span><span class="status warn">${review} cần kiểm tra</span>${skip?`<span class="badge">${skip} câu đã có — bỏ qua</span>`:""}</div>
-    <div class="import-preview-list">${rows.map(r=>`<div class="import-preview-row ${r.issues.length?"issue":""}"><div><b>Câu ${r.number}</b> · Part ${r.part}${existing.has(r.number)?' <span class="badge">Đã có</span>':""}<div class="small">${esc(r.content||"(không nhận được nội dung)")}</div><div class="muted small">${Object.entries(r.choices).map(([k,v])=>`${k}. ${v}`).join(" · ")||"Chưa nhận được lựa chọn"}</div></div><div><b>${esc(r.answer||"—")}</b>${r.issues.length?`<div class="import-issues">${r.issues.map(x=>`<span class="status warn">${esc(x)}</span>`).join("")}</div>`:'<span class="status ok">OK</span>'}</div></div>`).join("")}</div>
-    <div class="row between wrap"><span class="muted small">Câu đã tồn tại trong đề sẽ không bị ghi đè.</span><button class="primary" id="doFileImport">Lưu ${rows.length-skip} câu nhận diện được</button></div><div id="fileImportProgress" class="muted small"></div></div></div>`;
+export async function readToeicImportFiles(questionFile,answerFile){
+  const [questions,answers]=await Promise.all([readDocx(questionFile),readAnswers(answerFile)]);
+  if(!questions.length)throw new Error("Không nhận diện được câu hỏi nào trong file Word.");
+  const seen=new Set(),rows=questions.filter(q=>{if(seen.has(q.number))return false;seen.add(q.number);return true;}).sort((a,b)=>a.number-b.number).map(q=>({...q,answer:answers[q.number]||null,issues:assess(q,answers[q.number])}));
+  return {rows,answers};
 }
 
-export function bindFileImporter(root=document){
-  const btn=root.querySelector("#importQuestionsFromFile");if(!btn||btn.dataset.bound)return;btn.dataset.bound="1";
-  btn.addEventListener("click",()=>{
-    const testId=root.querySelector(".authoring")?.dataset.testId;
-    const partMap=Object.fromEntries([...root.querySelectorAll(".add-question[data-part][data-partno]")].map(x=>[Number(x.dataset.partno),x.dataset.part]));
-    const existing=new Set([...root.querySelectorAll(".author-question[data-number]")].map(x=>Number(x.dataset.number)));
-    const host=document.querySelector("#modalRoot");if(!testId||!host)return;
-    host.innerHTML=`<div class="modal-backdrop"><div class="modal"><div class="row between"><div><h2>Nhập từ file</h2><p class="muted">Tải file đề Word và file đáp án Excel. Không đọc ảnh/audio ở bước này.</p></div><button class="ghost sm" data-close>Đóng</button></div><form id="fileImportForm" class="stack"><label>File đề Word (.docx)<input type="file" name="docx" accept=".docx" required></label><label>File đáp án Excel (.xlsx, .xls)<input type="file" name="xlsx" accept=".xlsx,.xls" required></label><div class="warning-box">Câu nhận diện chưa đủ vẫn được nhập và sẽ mang nhãn <b>Cần kiểm tra</b>. Câu đã có trong đề không bị ghi đè.</div><button class="primary">Đọc file và xem trước</button></form><div id="fileImportReadStatus" class="muted small"></div></div></div>`;
-    host.querySelector("[data-close]").onclick=()=>host.innerHTML="";
-    host.querySelector("#fileImportForm").onsubmit=async e=>{
-      e.preventDefault();const form=e.currentTarget,submit=e.submitter,status=host.querySelector("#fileImportReadStatus"),docx=form.elements.docx.files?.[0],xlsx=form.elements.xlsx.files?.[0];
-      submit.disabled=true;submit.textContent="Đang đọc file…";
-      try{
-        const [questions,answers]=await Promise.all([readDocx(docx),readAnswers(xlsx)]);
-        if(!questions.length)throw new Error("Không nhận diện được câu hỏi nào trong file Word.");
-        const seen=new Set(),rows=questions.filter(q=>{if(seen.has(q.number))return false;seen.add(q.number);return true;}).sort((a,b)=>a.number-b.number).map(q=>({...q,answer:answers[q.number]||null,issues:assess(q,answers[q.number])}));
-        host.innerHTML=modalHtml(rows,existing);host.querySelector("[data-close]").onclick=()=>host.innerHTML="";
-        host.querySelector("#doFileImport").onclick=async ev=>{
-          const saveBtn=ev.currentTarget,progress=host.querySelector("#fileImportProgress"),todo=rows.filter(r=>!existing.has(r.number));saveBtn.disabled=true;let done=0,failed=[];
-          for(const r of todo){
-            const partId=partMap[r.part];if(!partId){failed.push(`Câu ${r.number}: đề chưa có Part ${r.part}`);continue;}
-            const keys=r.part===2?["A","B","C"]:["A","B","C","D"],choices=keys.filter(k=>r.choices[k]!=null).map(k=>({key:k,content:rich(r.choices[k]),media_type:null,storage_path:null}));
-            const payload={test_part_id:partId,source_number:r.number,source_order:r.number,stimulus_group_id:null,content:rich(r.content),media_type:null,storage_path:null,correct_choice_key:r.answer||null,score_weight:1,choices};
-            const {error}=await sb.rpc("staff_upsert_question",{p_data:payload});if(error)failed.push(`Câu ${r.number}: ${error.message}`);else done++;
-            progress.textContent=`Đã lưu ${done}/${todo.length} câu${failed.length?` · ${failed.length} lỗi`:""}…`;
-          }
-          if(failed.length){progress.innerHTML=`Đã lưu <b>${done}</b> câu. <b>${failed.length}</b> câu chưa lưu:<br>${failed.slice(0,12).map(esc).join("<br>")}${failed.length>12?"<br>…":""}`;saveBtn.disabled=false;saveBtn.textContent="Thử lưu phần còn lỗi";}
-          else{progress.innerHTML=`✓ Đã lưu ${done} câu. Đang tải lại màn hình soạn đề…`;setTimeout(()=>location.reload(),700);}
-        };
-      }catch(err){status.textContent=`Không đọc được file: ${err.message||err}`;submit.disabled=false;submit.textContent="Đọc file và xem trước";}
-    };
-  });
+export function inferTestKind(rows){
+  const parts=new Set(rows.map(r=>r.part).filter(Boolean)),hasListening=[1,2,3,4].some(p=>parts.has(p)),hasReading=[5,6,7].some(p=>parts.has(p));
+  if(hasListening&&hasReading)return "full";
+  if(hasListening)return "listening";
+  if(hasReading)return "reading";
+  throw new Error("Không xác định được loại đề từ các Part.");
 }
 
-
-function ensureImportButton(){
-  const authoring=document.querySelector(".authoring");if(!authoring||document.querySelector("#importQuestionsFromFile")||!authoring.querySelector(".add-question"))return;
-  const actions=authoring.querySelector(".authoring-top-actions");if(!actions)return;
-  const btn=document.createElement("button");btn.type="button";btn.id="importQuestionsFromFile";btn.className="secondary sm";btn.textContent="↑ Nhập từ file";
-  const ai=actions.querySelector(".ai-later");actions.insertBefore(btn,ai||null);bindFileImporter(document);
+export function renderImportPreview(rows){
+  const counts={};for(const r of rows)counts[r.part]=(counts[r.part]||0)+1;
+  const review=rows.filter(r=>r.issues.length).length,ok=rows.length-review,answers=rows.filter(r=>r.answer).length;
+  return `<div class="stack"><div class="row wrap"><span class="status ok">${ok} câu OK</span><span class="status warn">${review} cần kiểm tra</span><span class="badge">${answers}/${rows.length} đáp án</span></div><div class="muted small">${Object.entries(counts).sort((a,b)=>a[0]-b[0]).map(([p,n])=>`Part ${p}: ${n}`).join(" · ")}</div><div style="max-height:320px;overflow:auto">${rows.map(r=>`<div style="padding:8px 0;border-top:1px solid var(--line)"><b>Câu ${r.number} · Part ${r.part}</b> <span class="badge">${safe(r.answer||"—")}</span><div class="small">${safe(r.content||"(không nhận được nội dung)")}</div>${r.issues.length?`<div class="small">${r.issues.map(x=>`<span class="status warn">${safe(x)}</span>`).join(" ")}</div>`:""}</div>`).join("")}</div></div>`;
 }
-if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",ensureImportButton);else ensureImportButton();
-new MutationObserver(ensureImportButton).observe(document.body,{childList:true,subtree:true});
+
+export async function importQuestionsIntoTest(sb,testId,rows,kind,onProgress){
+  const {data:parts,error}=await sb.from("test_parts").select("id,part_no").eq("test_id",testId);
+  if(error)throw error;
+  const partMap=Object.fromEntries((parts||[]).map(p=>[Number(p.part_no),p.id])),allowed=new Set(kind==="listening"?[1,2,3,4]:kind==="reading"?[5,6,7]:[1,2,3,4,5,6,7]);
+  const todo=rows.filter(r=>allowed.has(r.part)),failed=[];let done=0;
+  for(const r of todo){
+    const partId=partMap[r.part];if(!partId){failed.push(`Câu ${r.number}: thiếu Part ${r.part}`);onProgress?.({done,total:todo.length,failed});continue;}
+    const keys=r.part===2?["A","B","C"]:["A","B","C","D"];
+    const choices=keys.filter(k=>r.choices[k]!=null).map(k=>({key:k,content:safe(r.choices[k]),media_type:null,storage_path:null}));
+    const payload={test_part_id:partId,source_number:r.number,source_order:r.number,stimulus_group_id:null,content:safe(r.content),media_type:null,storage_path:null,correct_choice_key:r.answer||null,score_weight:1,choices};
+    const {error:saveError}=await sb.rpc("staff_upsert_question",{p_data:payload});
+    if(saveError)failed.push(`Câu ${r.number}: ${saveError.message}`);else done++;
+    onProgress?.({done,total:todo.length,failed});
+  }
+  return {done,total:todo.length,failed};
+}
