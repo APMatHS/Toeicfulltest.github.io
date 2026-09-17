@@ -36,7 +36,7 @@ export function createListeningAudioSettings(ctx){
       ${has?`<div class="listening-audio-meta"><div><span class="muted">Tên file</span><b>${esc(test.listening_audio_filename||"Audio Listening")}</b></div><div><span class="muted">Thời lượng</span><b>${formatDuration(test.listening_audio_duration_seconds)}</b></div></div>${tooLong?`<div class="warning-box"><b>Audio dài hơn thời lượng bài kiểm tra (${test.duration_minutes} phút).</b><br>Hãy tăng thời lượng bài trước khi Publish.</div>`:""}<div id="listeningAudioTeacherPreview" class="listening-audio-preview muted">Đang tạo liên kết nghe thử…</div>`:'<div class="warning-box"><b>Cần tải 1 file audio trước khi xuất bản Listening/Full Test.</b><br>Không cần gắn audio riêng cho từng câu hoặc từng nhóm.</div>'}
       <div class="row wrap"><label class="btn ${has?"secondary":"primary"} ${locked?"disabled":""}">${has?"Thay file audio":"Tải audio"}<input id="listeningAudioUpload" type="file" accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/aac,audio/ogg,.mp3,.m4a,.wav,.aac,.ogg" ${locked?"disabled":""} hidden></label>${has?`<button type="button" class="danger" id="removeListeningAudio" ${locked?"disabled":""}>Xóa audio</button>`:""}</div>
       <div id="listeningAudioUploadProgress" class="listening-upload-progress" hidden><progress max="100" value="0" style="width:min(100%,480px)"></progress> <b data-progress-text>0%</b><div class="muted small" data-progress-note></div></div>
-      ${locked?'<p class="muted small">🔒 Audio đã khóa vì đã có sinh viên bắt đầu bài.</p>':`<p class="muted small">Nên dùng MP3/M4A. Tối đa ${formatBytes(MAX_AUDIO_UPLOAD_BYTES)}. File trên 6 MB tự dùng upload tiếp tục được khi mạng chập chờn.</p>`}
+      ${locked?'<p class="muted small">🔒 Audio đã khóa vì đã có sinh viên bắt đầu bài.</p>':`<p class="muted small">Nên dùng MP3/M4A. Tối đa ${formatBytes(MAX_AUDIO_UPLOAD_BYTES)}. File trên 6 MB dùng resumable upload trực tiếp tới Supabase Storage.</p>`}
     </section>`;
   }
 
@@ -54,11 +54,28 @@ export function createListeningAudioSettings(ctx){
       if(file.size>MAX_AUDIO_UPLOAD_BYTES){input.value="";return toast(`Audio ${formatBytes(file.size)} vượt giới hạn ${formatBytes(MAX_AUDIO_UPLOAD_BYTES)}. Hãy nén MP3 hoặc chọn file nhỏ hơn.`,7000);}
       const label=input.closest("label"),oldText=label?.childNodes?.[0]?.textContent||"Tải audio";
       const progress=document.querySelector("#listeningAudioUploadProgress"),bar=progress?.querySelector("progress"),progressText=progress?.querySelector("[data-progress-text]"),progressNote=progress?.querySelector("[data-progress-note]");
-      const updateProgress=({percent=0,uploaded=0,total=file.size,method="standard"}={})=>{
+      let startedAt=0,lastUploaded=0,lastAt=0,speedBps=0;
+      const updateProgress=({percent=0,uploaded=0,total=file.size,method="standard",status="uploading",retryAttempt=0,httpStatus=null,idleMs=0}={})=>{
+        const now=Date.now();
+        if(!startedAt){startedAt=now;lastAt=now;}
+        if(uploaded>lastUploaded&&now>lastAt){
+          const instant=(uploaded-lastUploaded)/((now-lastAt)/1000);
+          speedBps=speedBps?speedBps*.65+instant*.35:instant;
+          lastUploaded=uploaded;lastAt=now;
+        }
         if(progress)progress.hidden=false;
         if(bar)bar.value=percent;
         if(progressText)progressText.textContent=`${percent}%`;
-        if(progressNote)progressNote.textContent=`${formatBytes(uploaded)} / ${formatBytes(total)} · ${method==="resumable"?"upload ổn định cho file lớn":"upload thường"}`;
+        let detail=`${formatBytes(uploaded)} / ${formatBytes(total)}`;
+        if(speedBps>0&&uploaded<total){
+          const mbps=speedBps/(1024*1024),eta=Math.max(0,(total-uploaded)/speedBps);
+          detail+=` · ${mbps.toFixed(mbps>=1?1:2)} MB/s · còn ~${eta>=60?`${Math.ceil(eta/60)} phút`:`${Math.ceil(eta)} giây`}`;
+        }
+        if(status==="resuming")detail+=" · đang nối lại lần tải trước";
+        else if(status==="retrying")detail+=` · mạng gián đoạn, đang thử lại lần ${retryAttempt}${httpStatus?` (HTTP ${httpStatus})`:""}`;
+        else if(status==="waiting")detail+=` · chưa nhận dữ liệu ${Math.round(idleMs/1000)} giây, đang chờ Supabase`;
+        else detail+=` · ${method==="resumable"?"resumable upload":"upload thường"}`;
+        if(progressNote)progressNote.textContent=detail;
         if(label?.childNodes?.[0])label.childNodes[0].textContent=`Đang tải audio… ${percent}%`;
       };
       if(label){label.classList.add("disabled");input.disabled=true;label.childNodes[0].textContent="Đang chuẩn bị audio…";}
@@ -69,13 +86,13 @@ export function createListeningAudioSettings(ctx){
         uploaded=await uploadMedia(file,`tests/${test.id}/listening-master`,{onProgress:updateProgress});
         const {error}=await sb.rpc("staff_set_listening_audio_v118b",{p_test_id:test.id,p_storage_path:uploaded.storage_path,p_filename:file.name,p_duration_seconds:duration||null});
         if(error)throw error;
-        updateProgress({percent:100,uploaded:file.size,total:file.size,method:file.size>6*1024*1024?"resumable":"standard"});
-        if(progressNote)progressNote.textContent=`Hoàn tất · ${formatBytes(file.size)}`;
+        updateProgress({percent:100,uploaded:file.size,total:file.size,method:file.size>6*1024*1024?"resumable":"standard",status:"done"});
+        if(progressNote)progressNote.textContent=`Hoàn tất · ${formatBytes(file.size)} · đã lưu an toàn`;
         toast("Đã lưu audio chung cho Listening Part 1–4");await onUpdated?.();
       }catch(err){
         if(uploaded?.storage_path)removeMedia?.(uploaded.storage_path).catch(()=>{});
-        if(progress){progress.hidden=false;if(progressNote)progressNote.textContent="Tải audio chưa hoàn tất. Có thể chọn lại file để thử lại.";}
-        toast(`Không tải được audio: ${err.message||err}`,7000);
+        if(progress){progress.hidden=false;if(progressNote)progressNote.textContent=`Tải audio chưa hoàn tất: ${err.message||err}`;}
+        toast(`Không tải được audio: ${err.message||err}`,8000);
         if(label){label.classList.remove("disabled");input.disabled=false;label.childNodes[0].textContent=oldText;}
         input.value="";
       }

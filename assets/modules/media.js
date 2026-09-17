@@ -68,14 +68,30 @@ async function loadTus(){
   return tusPromise;
 }
 
+function directStorageEndpoint(){
+  try{
+    const url=new URL(SUPABASE_URL);
+    const projectId=url.hostname.split(".")[0];
+    if(projectId) return `https://${projectId}.storage.supabase.co/storage/v1/upload/resumable`;
+  }catch{}
+  return `${SUPABASE_URL}/storage/v1/upload/resumable`;
+}
+
+function uploadErrorMessage(error){
+  const status=error?.originalResponse?.getStatus?.();
+  const body=error?.originalResponse?.getBody?.();
+  if(status) return `Upload audio lỗi HTTP ${status}${body?`: ${String(body).slice(0,240)}`:""}`;
+  return error?.message||String(error||"Không xác định được lỗi upload.");
+}
+
 export function createMediaService(sb){
   async function standardUpload(path,file,onProgress){
-    onProgress?.({percent:0,uploaded:0,total:file.size,method:"standard"});
+    onProgress?.({percent:0,uploaded:0,total:file.size,method:"standard",status:"uploading"});
     const {error}=await sb.storage.from("test-media").upload(path,file,{
       cacheControl:"3600",upsert:false,contentType:file.type
     });
     if(error) throw error;
-    onProgress?.({percent:100,uploaded:file.size,total:file.size,method:"standard"});
+    onProgress?.({percent:100,uploaded:file.size,total:file.size,method:"standard",status:"done"});
   }
 
   async function resumableUpload(path,file,onProgress){
@@ -84,12 +100,30 @@ export function createMediaService(sb){
     const token=data?.session?.access_token;
     if(!token) throw new Error("Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại trước khi tải audio.");
     const tus=await loadTus();
+
     await new Promise((resolve,reject)=>{
+      let lastUploaded=0;
+      let lastProgressAt=Date.now();
+      let stallTimer=null;
+
+      const clearStall=()=>{ if(stallTimer){clearInterval(stallTimer);stallTimer=null;} };
+      const reportStall=()=>{
+        const idleMs=Date.now()-lastProgressAt;
+        if(lastUploaded>0 && idleMs>=15000){
+          onProgress?.({
+            percent:file.size?Math.min(100,Math.round((lastUploaded/file.size)*100)):0,
+            uploaded:lastUploaded,total:file.size,method:"resumable",
+            status:"waiting",idleMs
+          });
+        }
+      };
+
       const upload=new tus.Upload(file,{
-        endpoint:`${SUPABASE_URL}/storage/v1/upload/resumable`,
-        retryDelays:[0,1000,3000,5000,10000,20000],
+        endpoint:directStorageEndpoint(),
+        retryDelays:[0,3000,5000,10000,20000],
         headers:{authorization:`Bearer ${token}`},
         uploadSize:file.size,
+        uploadDataDuringCreation:true,
         chunkSize:TUS_CHUNK_BYTES,
         removeFingerprintOnSuccess:true,
         metadata:{
@@ -98,14 +132,45 @@ export function createMediaService(sb){
           contentType:file.type||"audio/mpeg",
           cacheControl:"3600"
         },
-        onError:reject,
-        onProgress(uploaded,total){
-          const percent=total?Math.min(100,Math.round((uploaded/total)*100)):0;
-          onProgress?.({percent,uploaded,total,method:"resumable"});
+        onError(err){
+          clearStall();
+          reject(new Error(uploadErrorMessage(err)));
         },
-        onSuccess:resolve
+        onProgress(uploaded,total){
+          lastUploaded=uploaded;
+          lastProgressAt=Date.now();
+          const percent=total?Math.min(100,Math.round((uploaded/total)*100)):0;
+          onProgress?.({percent,uploaded,total,method:"resumable",status:"uploading"});
+        },
+        onShouldRetry(err,retryAttempt,options){
+          const status=err?.originalResponse?.getStatus?.();
+          onProgress?.({
+            percent:file.size?Math.min(100,Math.round((lastUploaded/file.size)*100)):0,
+            uploaded:lastUploaded,total:file.size,method:"resumable",
+            status:"retrying",retryAttempt:retryAttempt+1,httpStatus:status||null
+          });
+          return status===409 ? false : true;
+        },
+        onSuccess(){
+          clearStall();
+          onProgress?.({percent:100,uploaded:file.size,total:file.size,method:"resumable",status:"done"});
+          resolve();
+        }
       });
-      upload.start();
+
+      stallTimer=setInterval(reportStall,5000);
+      upload.findPreviousUploads()
+        .then(previousUploads=>{
+          if(previousUploads.length){
+            upload.resumeFromPreviousUpload(previousUploads[0]);
+            onProgress?.({percent:0,uploaded:0,total:file.size,method:"resumable",status:"resuming"});
+          }
+          upload.start();
+        })
+        .catch(err=>{
+          clearStall();
+          reject(new Error(uploadErrorMessage(err)));
+        });
     });
   }
 
