@@ -1,8 +1,18 @@
 import { esc } from "./utils.js";
 
 let mammothPromise=null,xlsxPromise=null;
-const loadMammoth=()=>mammothPromise||(mammothPromise=import("https://cdn.jsdelivr.net/npm/mammoth@1.8.0/+esm"));
-const loadXlsx=()=>xlsxPromise||(xlsxPromise=import("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm"));
+const loadMammoth=async()=>{
+  if(!mammothPromise)mammothPromise=import("https://cdn.jsdelivr.net/npm/mammoth@1.8.0/+esm");
+  const mod=await mammothPromise;
+  return mod?.extractRawText?mod:(mod?.default?.extractRawText?mod.default:mod);
+};
+const loadXlsx=async()=>{
+  if(!xlsxPromise)xlsxPromise=import("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm");
+  const mod=await xlsxPromise;
+  const api=mod?.read&&mod?.utils?mod:(mod?.default?.read&&mod?.default?.utils?mod.default:mod);
+  if(typeof api?.read!=="function"||!api?.utils)throw new Error("Không tải được thư viện đọc Excel.");
+  return api;
+};
 const clean=s=>String(s??"").replace(/\u00a0/g," ").replace(/\s+/g," ").trim();
 const safe=s=>esc(clean(s));
 
@@ -30,8 +40,10 @@ function parseQuestionText(text){
 
 async function readDocx(file){
   if(!file||!/\.docx$/i.test(file.name))throw new Error("File đề phải là .docx.");
-  const mammoth=await loadMammoth(),buf=await file.arrayBuffer(),result=await mammoth.extractRawText({arrayBuffer:buf});
-  return parseQuestionText(result.value||"");
+  const mammoth=await loadMammoth();
+  if(typeof mammoth?.extractRawText!=="function")throw new Error("Không tải được thư viện đọc Word.");
+  const buf=await file.arrayBuffer(),result=await mammoth.extractRawText({arrayBuffer:buf});
+  return parseQuestionText(result?.value||"");
 }
 
 async function readAnswers(file){

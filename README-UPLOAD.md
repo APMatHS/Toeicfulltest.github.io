@@ -18,3 +18,4 @@ Luồng mới:
 Không đụng Tạo thủ công, Từ bài kiểm tra cũ, audio, anti-cheat, submissions.
 
 Lưu ý: Supabase production trước đó đã được nới questions.correct_choice_key cho phép NULL.
+\nFix 2: tương thích đúng ESM export của Mammoth/XLSX; sửa lỗi `Cannot read properties of undefined (reading 'split')` khi đọc file.\n
