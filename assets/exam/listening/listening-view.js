@@ -34,7 +34,7 @@ function antiCheatText(state){
 
 function renderChoices(q,state,media){
   const hideContent=Number(q.part)<=2;
-  return orderedListeningChoices(q,state.attemptId).map(c=>`<label class="listening-choice ${q.selected===c.originalKey?"selected":""}"><input type="radio" name="answer" value="${esc(c.originalKey)}" ${q.selected===c.originalKey?"checked":""}><span class="choice-key">${esc(c.displayKey)}</span><span>${hideContent?'<span class="muted">Chọn đáp án</span>':`${c.content?media.renderRichText(c.content):""}${c.url?`<img loading="lazy" decoding="async" src="${esc(c.url)}" alt="Đáp án ${esc(c.displayKey)}">`:""}`}</span></label>`).join("");
+  return orderedListeningChoices(q,state.attemptId).map(c=>`<label class="choice listening-reading-choice ${q.selected===c.originalKey?"selected":""}"><input type="radio" name="answer" value="${esc(c.originalKey)}" ${q.selected===c.originalKey?"checked":""}><b>${esc(c.displayKey)}.</b><div class="choice-body">${c.url?`<img class="choice-media" loading="lazy" decoding="async" src="${esc(c.url)}" alt="Đáp án ${esc(c.displayKey)}">`:""}<div class="rich-content">${hideContent?"":(c.content?media.renderRichText(c.content):"")}</div></div></label>`).join("");
 }
 
 function renderMasterAudio(state,audio){
@@ -51,8 +51,19 @@ export function renderListeningView(state,{audio,media}){
   return `<section class="listening-shell">
     <div class="card listening-head"><div><div class="eyebrow">${state.preview?"LISTENING · LÀM THỬ":"LISTENING"}</div><h2>${esc(state.payload.attempt.test_title||"TOEIC Listening")}</h2></div><div class="listening-head-meta"><b id="listeningTimer">--:--</b><span id="listeningSaveStatus" data-kind="saved">${esc(state.saveStatus||"Đã lưu")}</span><span id="antiCheatStatus">${esc(antiCheatText(state))}</span></div></div>
     ${renderMasterAudio(state,audio)}
-    <div class="listening-layout"><main class="card listening-main"><div class="row between wrap"><span class="badge">Part ${q.part}</span><b>Câu ${q.number}</b></div>${renderQuestionMedia(q,media)}
-    <div class="listening-choices">${renderChoices(q,state,media)}</div><div class="row between wrap listening-nav"><button class="secondary" id="prevListening" ${state.current===0?"disabled":""}>← Câu trước</button><label class="check-row"><input id="markListening" type="checkbox" ${q.marked?"checked":""}> Đánh dấu xem lại</label><button class="primary" id="nextListening">${state.current===state.payload.questions.length-1?"Hoàn thành Listening":"Câu tiếp →"}</button></div></main>
+    <div class="listening-layout"><main class="card listening-main"><div class="row between wrap"><span class="badge">Part ${q.part}</span><span class="muted">Câu ${q.number} · ${state.current+1}/${state.payload.questions.length}</span></div>
+    <div class="question listening-question"><div class="question-title"><b>${q.number}.</b><div class="listening-question-body">${renderQuestionMedia(q,media)}</div></div>
+    <div class="listening-choices">${renderChoices(q,state,media)}</div></div><div class="row between wrap listening-nav"><button class="secondary" id="prevListening" ${state.current===0?"disabled":""}>← Câu trước</button><label class="check-row"><input id="markListening" type="checkbox" ${q.marked?"checked":""}> Đánh dấu xem lại</label><button class="primary" id="nextListening">${state.current===state.payload.questions.length-1?"Hoàn thành Listening":"Câu tiếp →"}</button></div></main>
     <aside class="card listening-palette"><div class="row between"><h3>Câu hỏi</h3><span class="muted">${answered}/${state.payload.questions.length}</span></div>${parts.map(([p,qs])=>`<div class="listening-palette-part"><b>Part ${p}</b><div>${qs.map(x=>{const idx=state.payload.questions.indexOf(x);return `<button class="${idx===state.current?"active":""} ${x.selected?"answered":""} ${x.marked?"marked":""}" data-idx="${idx}">${x.number}</button>`;}).join("")}</div></div>`).join("")}</aside></div>
     <div class="row end"><button class="${state.preview||state.mode==="full"?"primary":"danger"}" id="submitListening" ${completeReady?"":"disabled"}>${state.mode==="full"?"Hoàn thành Listening → Reading":state.preview?"Kết thúc làm thử":"Nộp bài"}</button></div>${completeReady?"":'<p class="muted small listening-complete-hint">Nút hoàn thành sẽ mở sau khi file audio chung phát hết và trạng thái đã đồng bộ.</p>'}</section>`;
+}
+
+export function bindListeningView(state,handlers){
+  document.querySelectorAll(".listening-palette button[data-idx]").forEach(b=>b.onclick=()=>handlers.showQuestion(Number(b.dataset.idx)));
+  document.querySelector("#prevListening").onclick=()=>handlers.showQuestion(state.current-1);
+  document.querySelector("#nextListening").onclick=()=>handlers.showQuestion(state.current+1);
+  document.querySelectorAll('input[name="answer"]').forEach(r=>r.onchange=()=>handlers.saveAnswer(r.value));
+  document.querySelector("#markListening").onchange=e=>handlers.saveMark(e.target.checked);
+  document.querySelector("#submitListening").onclick=handlers.submit;
+  const play=document.querySelector("#playListeningAudio");if(play)play.onclick=handlers.playAudio;
 }
