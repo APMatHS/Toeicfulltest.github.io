@@ -1,3 +1,4 @@
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 import { SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY } from "../config.js";
 import { loadXlsx } from "../services/xlsx-service.js";
 import { scoreOutOfTen } from "./score-utils.js";
@@ -12,30 +13,12 @@ function currentTestId(){
   return location.hash.match(/^#\/test\/([^/]+)/)?.[1]||null;
 }
 
-function accessToken(){
-  const ref=new URL(SUPABASE_URL).hostname.split(".")[0];
-  const candidates=[`sb-${ref}-auth-token`,...Object.keys(localStorage).filter(k=>k.startsWith("sb-")&&k.endsWith("-auth-token"))];
-  for(const key of [...new Set(candidates)]){
-    try{
-      const value=JSON.parse(localStorage.getItem(key)||"null");
-      const token=value?.access_token||value?.currentSession?.access_token||value?.session?.access_token;
-      if(token)return token;
-    }catch{}
-  }
-  return null;
-}
+const exportClient=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);
 
 async function fetchExport(testId){
-  const token=accessToken();
-  if(!token)throw new Error("Không tìm thấy phiên đăng nhập. Hãy tải lại trang rồi thử lại.");
-  const response=await fetch(`${SUPABASE_URL}/rest/v1/rpc/staff_get_test_export`,{
-    method:"POST",
-    headers:{"Content-Type":"application/json",apikey:SUPABASE_PUBLISHABLE_KEY,Authorization:`Bearer ${token}`},
-    body:JSON.stringify({p_test_id:testId})
-  });
-  const payload=await response.json().catch(()=>null);
-  if(!response.ok)throw new Error(payload?.message||`Không lấy được dữ liệu Excel (${response.status}).`);
-  return payload;
+  const {data,error}=await exportClient.rpc("staff_get_test_export",{p_test_id:testId});
+  if(error)throw error;
+  return data;
 }
 
 function sectionStats(answers=[]){
