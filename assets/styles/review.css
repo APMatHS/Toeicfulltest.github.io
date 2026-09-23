@@ -3,6 +3,7 @@
 .review-overview>div{border:1px solid var(--line);border-radius:12px;padding:11px 12px;background:#fafcff;display:grid;gap:3px}
 .review-overview span{font-size:.78rem;color:var(--muted)}
 .review-overview b{font-size:1.35rem}
+.section-score-overview{grid-template-columns:repeat(3,minmax(0,1fr))}
 .review-sticky-tools{position:sticky;top:72px;z-index:35;margin:0 0 16px;padding:10px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.96);box-shadow:0 8px 24px rgba(15,23,42,.08);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
 .review-tool-row,.review-jump-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .review-tool-row{margin-bottom:8px}
@@ -38,6 +39,7 @@
 }
 @media(max-width:620px){
   .review-overview{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .section-score-overview>div:last-child{grid-column:1/-1}
   .review-sticky-tools{top:64px;padding:8px;border-radius:12px}
   .review-tool-row{align-items:stretch;flex-direction:column}
   .review-open-actions{display:grid;grid-template-columns:1fr 1fr}
