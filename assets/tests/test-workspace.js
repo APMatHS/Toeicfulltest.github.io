@@ -42,6 +42,7 @@ export function createTestWorkspaceController(ctx){
   async function activateTestTab(id,tab,{push=true,restore=true}={}){
     const w=workspace();if(!w||w.id!==id)return renderTestDetail(id,tab);
     const valid=["overview","practice","live","submissions","authoring","settings"];if(!valid.includes(tab))tab="overview";
+    const previousTab=w.activeTab;if(previousTab==="live"&&tab!=="live"){clearLiveChannel();w.loaded.live=false;}
     saveWorkspaceTabScroll();document.querySelectorAll(".test-panel").forEach(el=>el.hidden=el.dataset.panel!==tab);document.querySelectorAll(".test-tab-btn").forEach(btn=>btn.classList.toggle("active",btn.dataset.tab===tab));w.activeTab=tab;setTestUrl(id,tab,push);
     const results=getStaffResults();
     if(tab==="live"&&!w.loaded.live){w.loaded.live=true;await results.renderLiveTab(id);}
