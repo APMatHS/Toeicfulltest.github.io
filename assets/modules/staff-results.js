@@ -28,10 +28,10 @@ export function createStaffResultsController({sb,esc,fmt,statusBadge,toast,getWo
       if(loading){queued=true;return;}
       loading=true;
       try{
-        const {data,error}=await sb.rpc("staff_get_test_live_v120",{p_test_id:testId});
+        const {data,error}=await sb.rpc("staff_get_test_live_v122",{p_test_id:testId});
         const root=document.querySelector("#liveRoot"); if(!root) return;
         if(error) return root.innerHTML=`<div class="warning-box">${esc(error.message)}</div>`;
-        const rows=data.rows||[],classes=data.classes||[],workspace=getWorkspace(),totalQuestions=workspace?.qs?.length||100,classFilter=workspace?.liveClassFilter||"",classRows=rows.filter(r=>rowInClass(r,classFilter));
+        const rows=data.rows||[],classes=data.classes||[],workspace=getWorkspace(),totalQuestions=Number(data.total_questions)||workspace?.questionCount||workspace?.qs?.length||100,classFilter=workspace?.liveClassFilter||"",classRows=rows.filter(r=>rowInClass(r,classFilter));
         trackedAttemptIds=new Set(rows.map(r=>r.attempt_id).filter(Boolean));
         const counts={roster:classRows.length,attempts:classRows.reduce((n,r)=>n+Number(r.attempts_used||0),0),in:classRows.filter(r=>r.status==="in_progress").length,done:classRows.filter(r=>["submitted","auto_submitted"].includes(r.status)).length,none:classRows.filter(r=>!r.attempt_id).length,viol:classRows.filter(r=>(r.violation_count||0)>0).length};
         root.innerHTML=`<div class="row between wrap"><div><h2>LIVE</h2><p class="muted">Tự cập nhật khi sinh viên làm bài. Có thể lọc riêng từng lớp.</p></div><div class="row wrap"><label>Lớp<select id="liveClassFilter">${classOptions(classes,classFilter)}</select></label><button class="secondary" id="liveExcel">↓ Excel hiện tại</button></div></div>
