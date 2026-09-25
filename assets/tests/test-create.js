@@ -19,12 +19,14 @@ export function createTestCreateController(ctx){
   }
 
   async function open(){
-    const [classesRes,testsRes]=await Promise.all([
+    const [classesRes,testsRes,assignmentsRes]=await Promise.all([
       sb.from("classes").select("id,name").order("name"),
-      sb.from("tests").select("id,title,class_id,duration_minutes,max_attempts,test_kind").is("archived_at",null).order("created_at",{ascending:false})
+      sb.from("tests").select("id,title,class_id,duration_minutes,max_attempts,test_kind").is("archived_at",null).order("created_at",{ascending:false}),
+      sb.from("test_classes").select("test_id,class_id")
     ]);
     const classes=classesRes.data||[];let oldTests=testsRes.data||[],migrationReady=!testsRes.error;
     if(testsRes.error){const fallback=await sb.from("tests").select("id,title,class_id,duration_minutes,max_attempts").is("archived_at",null).order("created_at",{ascending:false});oldTests=(fallback.data||[]).map(t=>({...t,test_kind:"reading"}));}
+    const assignedByTest=(assignmentsRes.data||[]).reduce((map,x)=>{(map[x.test_id]??=[]).push(x.class_id);return map;},{});
     const options=classOptions(classes);
     modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal wide create-test-modal">
       <div class="row between wrap"><div><h2>Tạo bài kiểm tra</h2><p class="muted">Listening, Reading và Full Test dùng chung một workspace; một bài có thể áp dụng cho nhiều lớp.</p></div><button class="ghost sm" data-close>Đóng</button></div>
@@ -49,7 +51,7 @@ export function createTestCreateController(ctx){
         <div id="importCreateActions" class="row between wrap" hidden><span class="muted small" id="importReadyNote"></span><button class="primary" id="createImportedTest">Tạo bài và nhập câu hỏi</button></div>
       </section>
 
-      <section class="create-mode-panel" data-mode-panel="clone" hidden><form id="cloneTestForm" class="form-grid"><label class="span-2">Bài kiểm tra nguồn<select name="source_test_id" required><option value="">Chọn bài…</option>${oldTests.map(t=>`<option value="${t.id}" data-duration="${t.duration_minutes}" data-max="${t.max_attempts}" data-class="${t.class_id||""}">${esc(t.title)} · ${esc(testKindLabel(t.test_kind))}</option>`).join("")}</select></label><label class="span-2">Tên bài mới<input name="title" required placeholder="Tên bài kiểm tra mới"></label><label class="span-2">Lớp áp dụng<select name="class_ids" multiple size="5">${options}</select>${classHint}</label><label>Thời gian (phút)<input type="number" name="duration_minutes" value="75" min="1" required></label><label>Số lần làm<input type="number" name="max_attempts" value="1" min="1" required></label><label>Mở lúc<input type="datetime-local" name="opens_at"></label><label>Đóng lúc<input type="datetime-local" name="closes_at"></label><div class="span-2 warning-box"><b>Chỉ sao chép nội dung đề.</b><br>Loại bài, Part, stimulus, media, câu hỏi và đáp án được giữ nguyên. Không sao chép lượt làm, điểm, LIVE hay vi phạm.</div><button type="submit" class="primary span-2">Tạo bản sao</button></form></section>
+      <section class="create-mode-panel" data-mode-panel="clone" hidden><form id="cloneTestForm" class="form-grid"><label class="span-2">Bài kiểm tra nguồn<select name="source_test_id" required><option value="">Chọn bài…</option>${oldTests.map(t=>`<option value="${t.id}" data-duration="${t.duration_minutes}" data-max="${t.max_attempts}" data-classes="${(assignedByTest[t.id]||[t.class_id].filter(Boolean)).join(",")}">${esc(t.title)} · ${esc(testKindLabel(t.test_kind))}</option>`).join("")}</select></label><label class="span-2">Tên bài mới<input name="title" required placeholder="Tên bài kiểm tra mới"></label><label class="span-2">Lớp áp dụng<select name="class_ids" multiple size="5">${options}</select>${classHint}</label><label>Thời gian (phút)<input type="number" name="duration_minutes" value="75" min="1" required></label><label>Số lần làm<input type="number" name="max_attempts" value="1" min="1" required></label><label>Mở lúc<input type="datetime-local" name="opens_at"></label><label>Đóng lúc<input type="datetime-local" name="closes_at"></label><div class="span-2 warning-box"><b>Chỉ sao chép nội dung đề.</b><br>Loại bài, Part, stimulus, media, câu hỏi và đáp án được giữ nguyên. Không sao chép lượt làm, điểm, LIVE hay vi phạm.</div><button type="submit" class="primary span-2">Tạo bản sao</button></form></section>
       <section class="create-mode-panel" data-mode-panel="ai" hidden><div class="ai-placeholder-card"><div><b>Tạo đề bằng AI</b><p class="muted">Giữ nguyên vị trí chức năng V1.17. AI sẽ chỉ tạo Draft và giảng viên phải duyệt trước khi Publish.</p></div><button class="primary" disabled>Tạo bản nháp bằng AI · Sắp hỗ trợ</button></div></section>
     </div></div>`;
     if(!migrationReady){modalRoot.querySelectorAll(".test-kind").forEach(b=>{if(b.dataset.kind!=="reading")b.disabled=true;});}
@@ -106,7 +108,7 @@ export function createTestCreateController(ctx){
 
   function bindClone(){
     const form=modalRoot.querySelector("#cloneTestForm"),source=form.elements.source_test_id;
-    source.onchange=()=>{const o=source.selectedOptions[0];if(!o?.value)return;form.elements.title.value=`${o.textContent.split(" · ")[0]} - Bản sao`;form.elements.duration_minutes.value=o.dataset.duration||75;form.elements.max_attempts.value=o.dataset.max||1;Array.from(form.elements.class_ids.options).forEach(x=>x.selected=x.value===o.dataset.class);};
+    source.onchange=()=>{const o=source.selectedOptions[0];if(!o?.value)return;form.elements.title.value=`${o.textContent.split(" · ")[0]} - Bản sao`;form.elements.duration_minutes.value=o.dataset.duration||75;form.elements.max_attempts.value=o.dataset.max||1;const selected=(o.dataset.classes||"").split(",").filter(Boolean);Array.from(form.elements.class_ids.options).forEach(x=>x.selected=selected.includes(x.value));};
     form.onsubmit=async e=>{e.preventDefault();const fd=new FormData(form),f=Object.fromEntries(fd),sourceId=f.source_test_id;delete f.source_test_id;f.class_ids=fd.getAll("class_ids");delete f.class_id;f.opens_at=f.opens_at?toIso(f.opens_at):"";f.closes_at=f.closes_at?toIso(f.closes_at):"";const btn=e.submitter||form.querySelector('button[type="submit"]');btn.disabled=true;btn.textContent="Đang nhân bản…";const {data,error}=await sb.rpc("staff_clone_test_v120",{p_source_test_id:sourceId,p_overrides:f});btn.disabled=false;btn.textContent="Tạo bản sao";if(error)return toast(error.message,6000);invalidate();closeModal();toast("Đã tạo bài từ bài kiểm tra cũ");go(`/test/${data}`);};
   }
   function invalidate(){invalidateStaffData("tests");invalidateStaffPage("tests");invalidateStaffPage("teacher");}
