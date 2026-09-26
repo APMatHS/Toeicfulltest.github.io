@@ -99,13 +99,25 @@ function eligible(item,part,remaining,selectedIds,excluded,exact=null){
   const q=itemQuestionCount(item);return Number(item.part_no)===Number(part)&&item.item_type===expectedType(part)&&q>0&&q<=remaining&&(!exact||q===exact)&&!selectedIds.has(item.id)&&!excluded.has(item.id);
 }
 
+function canComplete(items,total){
+  total=Number(total)||0;if(total===0)return true;if(total<0)return false;
+  const reachable=new Uint8Array(total+1);reachable[0]=1;
+  for(const item of items){const q=itemQuestionCount(item);if(q<=0||q>total)continue;for(let s=total;s>=q;s--)if(reachable[s-q])reachable[s]=1;if(reachable[total])return true;}
+  return false;
+}
+
+function feasiblePool(index,part,remaining,selectedIds,excluded,exact=null){
+  const base=index.filter(item=>eligible(item,part,remaining,selectedIds,excluded,exact));if(exact||remaining<=1)return base;
+  return base.filter(item=>{const left=remaining-itemQuestionCount(item);if(left===0)return true;const rest=index.filter(x=>x.id!==item.id&&eligible(x,part,left,selectedIds,excluded));return canComplete(rest,left);});
+}
+
 export function autoFill(index,parts,targets,prefs,current=[],excluded=new Set()){
   const locked=current.filter(x=>x.locked),selected=locked.map(x=>({...x})),selectedIds=new Set(selected.map(x=>x.item.id)),warnings=[];
   for(const raw of parts){
     const part=Number(raw.part_no??raw),target=Number(targets[part])||0;let have=selected.filter(x=>Number(x.item.part_no)===part).reduce((n,x)=>n+itemQuestionCount(x.item),0),remaining=target-have;
     if(remaining<0){warnings.push(`Part ${part}: số câu đã khóa vượt cấu hình ${-remaining} câu.`);continue;}
     while(remaining>0){
-      const pool=index.filter(item=>eligible(item,part,remaining,selectedIds,excluded));
+      const pool=feasiblePool(index,part,remaining,selectedIds,excluded);
       if(!pool.length){warnings.push(`Part ${part}: còn thiếu ${remaining} câu nhưng ngân hàng không có tổ hợp phù hợp.`);break;}
       const item=weightedPick(pool,{prefs,selected,targets});selected.push({item,locked:false});selectedIds.add(item.id);remaining-=itemQuestionCount(item);
     }
@@ -114,7 +126,8 @@ export function autoFill(index,parts,targets,prefs,current=[],excluded=new Set()
 }
 
 export function candidateBatch(index,{part,remaining,selected=[],excluded=new Set(),prefs={},targets={},limit=8,exact=null}={}){
-  const selectedIds=new Set(selected.map(x=>x.item.id));return index.filter(item=>eligible(item,part,remaining,selectedIds,excluded,exact)).map(item=>({item,weight:candidateWeight(item,{prefs,selected,targets})})).sort((a,b)=>b.weight-a.weight).slice(0,limit).map(x=>x.item);
+  const selectedIds=new Set(selected.map(x=>x.item.id)),pool=feasiblePool(index,part,remaining,selectedIds,excluded,exact);
+  return pool.map(item=>({item,weight:candidateWeight(item,{prefs,selected,targets})})).sort((a,b)=>b.weight-a.weight).slice(0,limit).map(x=>x.item);
 }
 
 export function manualMatches(index,{part,search="",selected=[],excluded=new Set(),limit=80}={}){
