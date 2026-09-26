@@ -1,4 +1,4 @@
-import { autoFill,candidateBatch,defaultTargets,itemQuestionCount,loadApprovedBankIndex,manualMatches,nextIncompletePart,selectedCounts,selectionProblems,standardCount } from "./bank-generator-data.js";
+import { autoFill,candidateBatch,defaultTargets,itemQuestionCount,loadApprovedBankIndex,manualMatches,nextIncompletePart,selectionProblems,standardCount } from "./bank-generator-data.js";
 import { cleanupGeneratedTestMedia,copySelectedBankMedia } from "./bank-generator-media.js";
 import { generatorShell } from "./bank-generator-view.js";
 
@@ -87,7 +87,7 @@ export function createQuestionBankGeneratorController(ctx){
     modalRoot.querySelector("#genRefreshCandidates")?.addEventListener("click",()=>{refreshCandidates();render();});
     modalRoot.querySelector("#genGuidedPart")?.addEventListener("change",e=>{state.currentPart=Number(e.target.value);refreshCandidates();render();});
     modalRoot.querySelector("#genManualPart")?.addEventListener("change",e=>{state.currentPart=Number(e.target.value);refreshCandidates();render();});
-    modalRoot.querySelector("#genManualSearch")?.addEventListener("input",e=>{state.manualSearch=e.target.value;refreshCandidates();const host=modalRoot.querySelector(".gen-candidates");if(host)render();});
+    modalRoot.querySelector("#genManualSearch")?.addEventListener("change",e=>{state.manualSearch=e.target.value;refreshCandidates();render();});
     modalRoot.querySelector("#genCancelReplace")?.addEventListener("click",()=>{state.replacingId=null;refreshCandidates();render();});
     modalRoot.querySelector("#genClosePreview")?.addEventListener("click",()=>{state.previewDetail=null;render();});
     modalRoot.querySelectorAll("[data-gen-preview]").forEach(b=>b.onclick=()=>showPreview(b.dataset.genPreview));
@@ -106,14 +106,15 @@ export function createQuestionBankGeneratorController(ctx){
     const problems=selectionProblems(state.parts,state.targets,state.selected);if(problems.length)return toast(`Chưa đủ ma trận: ${problems[0]}`,7000);
     if(!state.selected.length)return toast("Chưa chọn item nào để đưa vào đề.");
     const btn=modalRoot.querySelector("#genCommit"),progress=modalRoot.querySelector("#genCommitProgress");btn.disabled=true;btn.textContent="Đang đưa vào đề…";
-    let copied=[];
+    let copied=[],committed=false,result=null;
     try{
       const ordered=sortFinalSelection(),details=await loadDetails(ordered.map(x=>x.item.id));
       const media=await copySelectedBankMedia({details,bankMedia,uploadMedia,removeMedia,testId:state.test.id,onProgress:p=>{if(progress)progress.textContent=p.total?`Đang chuẩn bị media ${p.done}/${p.total}${p.percent!=null?` · ${p.percent}%`:""}`:"Đang chuẩn bị dữ liệu…";}});copied=media.created;
       if(progress)progress.textContent="Đang ghi câu hỏi vào đề…";
-      const {data,error}=await sb.rpc("staff_materialize_bank_selection",{p_data:{test_id:state.test.id,item_ids:ordered.map(x=>x.item.id),media_map:media.mediaMap}});if(error)throw error;
-      state=null;detailCache.clear();closeModal();toast(`Đã đưa ${data?.questions_created||0} câu từ ngân hàng vào đề.`);await onCommitted?.(data);
-    }catch(err){await cleanupGeneratedTestMedia(copied,removeMedia);if(btn){btn.disabled=false;btn.textContent="Đưa vào đề";}if(progress)progress.textContent="Không ghi được vào đề; không có câu nào được thêm.";toast(`Tạo đề thất bại: ${err.message||err}`,8000);}
+      const {data,error}=await sb.rpc("staff_materialize_bank_selection",{p_data:{test_id:state.test.id,item_ids:ordered.map(x=>x.item.id),media_map:media.mediaMap}});if(error)throw error;committed=true;result=data;
+    }catch(err){if(!committed)await cleanupGeneratedTestMedia(copied,removeMedia);btn.disabled=false;btn.textContent="Đưa vào đề";if(progress)progress.textContent="Không ghi được vào đề; không có câu nào được thêm.";return toast(`Tạo đề thất bại: ${err.message||err}`,8000);}
+    state=null;detailCache.clear();closeModal();toast(`Đã đưa ${result?.questions_created||0} câu từ ngân hàng vào đề.`);
+    try{await onCommitted?.(result);}catch(err){console.error(err);toast("Đã tạo đề thành công; hãy mở lại tab Soạn đề để tải nội dung mới.",7000);}
   }
 
   async function open({testId,parts=[],questions=[]}){
