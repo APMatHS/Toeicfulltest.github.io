@@ -24,8 +24,8 @@ function base64File(base64,type,name){
 }
 
 function inferPart(number,current=0){
-  if(current>=5&&current<=7)return current;
-  if(number>=101&&number<=130)return 5;if(number>=131&&number<=146)return 6;if(number>=147&&number<=200)return 7;return 0;
+  if(number>=101&&number<=130)return 5;if(number>=131&&number<=146)return 6;if(number>=147&&number<=200)return 7;
+  return current>=5&&current<=7?current:0;
 }
 function rangeFromText(text){
   const m=clean(text).match(/Questions?\s+(\d{1,3})\s*(?:[-–—]|to)\s*(\d{1,3})\s+refer\b/i);
