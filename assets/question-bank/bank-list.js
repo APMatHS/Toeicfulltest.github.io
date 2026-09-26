@@ -15,7 +15,7 @@ function tagText(values,max=3){const list=Array.isArray(values)?values.filter(Bo
 function statsOf(item){const raw=item.bank_item_stats;return Array.isArray(raw)?(raw[0]||{}):(raw||{});}
 
 export function createQuestionBankListController(ctx){
-  const {sb,toast,getSession,getView,getEditor,getImporter}=ctx;
+  const {sb,toast,getSession,getView,getEditor}=ctx;
   let requestSeq=0;
 
   function storageKey(){return `toeic.questionBank.filters.${getSession()?.user?.id||"anon"}`;}
@@ -94,7 +94,7 @@ export function createQuestionBankListController(ctx){
     view.querySelector("#bankReload")?.addEventListener("click",()=>{loadSummary();loadItems({keepPage:true});});
     view.querySelector("#bankResetFilters")?.addEventListener("click",()=>{state={...DEFAULT_STATE};saveState();renderBank();});
     view.querySelector("#bankCreate")?.addEventListener("click",()=>getEditor().chooseCreate());
-    view.querySelector("#bankImportWord")?.addEventListener("click",()=>getImporter().open());
+    view.querySelector("#bankImportWord")?.addEventListener("click",()=>document.dispatchEvent(new CustomEvent("toeic:bank-import-open")));
   }
 
   async function renderBank(){
