@@ -27,7 +27,7 @@ function validateItem(item){
 
 export function createQuestionBankImportController(ctx){
   const {sb,modalRoot,toast,closeModal,bankMedia,onSaved}=ctx;
-  let state=null;
+  let state=null,operationSeq=0;
 
   async function cleanupUnsaved(){
     if(!state?.uploadedPaths?.length)return;
@@ -35,20 +35,21 @@ export function createQuestionBankImportController(ctx){
     if(remove.length)try{await bankMedia.removePaths(remove);}catch(err){console.warn("Không dọn được media import chưa dùng",err);}
     state.uploadedPaths=[...kept];
   }
-  async function closeImport(){await cleanupUnsaved();state=null;closeModal();}
+  async function closeImport(){operationSeq++;await cleanupUnsaved();state=null;closeModal();}
 
   function open(){
-    state={items:[],uploadedPaths:[],messages:[],index:0,fileName:""};modalRoot.innerHTML=wordImportUploadView();
+    operationSeq++;state={items:[],uploadedPaths:[],messages:[],index:0,fileName:""};modalRoot.innerHTML=wordImportUploadView();
     modalRoot.querySelector("[data-import-close]").onclick=closeImport;
     const form=modalRoot.querySelector("#bankWordUpload"),progress=modalRoot.querySelector("#bankWordProgress");
     form.onsubmit=async e=>{
       e.preventDefault();const file=form.elements.word_file.files?.[0];if(!file)return toast("Vui lòng chọn file Word .docx.");
-      const btn=e.submitter;btn.disabled=true;btn.textContent="Đang đọc Word…";progress.textContent="Đang chuyển Word sang rich text…";
+      const seq=++operationSeq,btn=e.submitter;btn.disabled=true;btn.textContent="Đang đọc Word…";progress.textContent="Đang chuyển Word sang rich text…";
       try{
-        const result=await parseQuestionBankWord(file,{bankMedia,onProgress:text=>{progress.textContent=text;}});
+        const result=await parseQuestionBankWord(file,{bankMedia,onProgress:text=>{if(seq===operationSeq&&progress.isConnected)progress.textContent=text;}});
+        if(seq!==operationSeq){if(result.uploadedPaths?.length)try{await bankMedia.removePaths(result.uploadedPaths);}catch{}return;}
         state={items:result.items.map(x=>({...x,include:true,difficulty:"unrated",primary_type:"",saved:false})),uploadedPaths:result.uploadedPaths,messages:result.messages,index:0,fileName:file.name};
         await renderReview();
-      }catch(err){progress.textContent="Không đọc được file Word.";toast(err.message||String(err),7500);btn.disabled=false;btn.textContent="Đọc Word và kiểm tra";}
+      }catch(err){if(seq!==operationSeq)return;if(progress.isConnected)progress.textContent="Không đọc được file Word.";toast(err.message||String(err),7500);if(btn.isConnected){btn.disabled=false;btn.textContent="Đọc Word và kiểm tra";}}
     };
   }
 
@@ -74,11 +75,11 @@ export function createQuestionBankImportController(ctx){
   }
 
   async function trackUpload(file){
-    const up=await bankMedia.uploadImage(file);state.uploadedPaths.push(up.storage_path);return up;
+    const up=await bankMedia.uploadImage(file);if(state)state.uploadedPaths.push(up.storage_path);return up;
   }
 
   async function renderReview(index=state.index){
-    if(!state)return;state.index=Math.min(state.items.length-1,Math.max(0,index));const item=state.items[state.index];await hydrateItemForView(item);
+    if(!state)return;state.index=Math.min(state.items.length-1,Math.max(0,index));const item=state.items[state.index];await hydrateItemForView(item);if(!state)return;
     modalRoot.innerHTML=wordImportReviewView({...state,index:state.index});
     modalRoot.querySelector("[data-import-close]").onclick=async()=>{persistCurrent();await closeImport();};
     const form=modalRoot.querySelector("#bankImportReviewForm");
@@ -112,7 +113,7 @@ export function createQuestionBankImportController(ctx){
       item.saved=true;item.savedId=data?.id||null;item.public_code=data?.public_code||null;item.include=false;done++;
     }
     if(failed.length){buttons.forEach(b=>b.disabled=false);progress.textContent=`Đã lưu ${done}/${selected.length}; ${failed.length} mục lỗi.`;toast(failed[0],8000);await renderReview(state.items.findIndex(x=>!x.saved&&x.include!==false)>=0?state.items.findIndex(x=>!x.saved&&x.include!==false):state.index);return;}
-    progress.textContent=`Đã lưu ${done} mục.`;await cleanupUnsaved();const label=status==="approved"?"Đã duyệt và lưu":"Đã lưu bản nháp";toast(`${label} ${done} mục từ Word.`);state=null;closeModal();await onSaved?.();
+    progress.textContent=`Đã lưu ${done} mục.`;await cleanupUnsaved();const label=status==="approved"?"Đã duyệt và lưu":"Đã lưu bản nháp";toast(`${label} ${done} mục từ Word.`);operationSeq++;state=null;closeModal();await onSaved?.();
   }
 
   return {open};
