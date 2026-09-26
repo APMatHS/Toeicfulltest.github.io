@@ -61,5 +61,11 @@ export function createQuestionBankMediaService(sb){
     return uploadFile(file,"rich");
   }
 
-  return {uploadFile,uploadImage,signedUrl,signedUrlMap};
+  async function removePaths(paths=[]){
+    const unique=[...new Set(paths.filter(Boolean))];if(!unique.length)return;
+    const {error}=await sb.storage.from(BUCKET).remove(unique);if(error)throw error;
+    unique.forEach(path=>cache.delete(path));
+  }
+
+  return {uploadFile,uploadImage,removePaths,signedUrl,signedUrlMap};
 }
