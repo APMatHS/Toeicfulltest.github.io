@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {mp3Signature,sanitizeMp3Stream,stripMp3Tags} from '../assets/question-bank/bank-listening-package.js';
 
-const makeFrame=(sampleByte=0x90,channelByte=0x64)=>{const sampleIndex=(sampleByte>>2)&3,rate=[44100,48000,32000][sampleIndex],bitrate=128,length=Math.floor(144000*bitrate/rate);const frame=new Uint8Array(length);frame.set([0xff,0xfb,sampleByte,channelByte]);return frame;};
+const bitrates=[0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0];
+const makeFrame=(sampleByte=0x90,channelByte=0x64)=>{const sampleIndex=(sampleByte>>2)&3,rate=[44100,48000,32000][sampleIndex],bitrate=bitrates[(sampleByte>>4)&15],length=Math.floor(144000*bitrate/rate);const frame=new Uint8Array(length);frame.set([0xff,0xfb,sampleByte,channelByte]);return frame;};
 const frame=makeFrame();
 const id3=Uint8Array.from([0x49,0x44,0x33,4,0,0,0,0,0,0]);
 const id3v1=new Uint8Array(128);id3v1.set([0x54,0x41,0x47]);
@@ -13,7 +14,7 @@ assert.deepEqual(mp3Signature(frame),{version:'mpeg1',layer:'layer3',sampleRate:
 const frame48=makeFrame(0x94);
 assert.notEqual(mp3Signature(frame).key,mp3Signature(frame48).key,'different sample rates must have different packaging signatures');
 const twoFrames=new Uint8Array(frame.length*2);twoFrames.set(frame);twoFrames.set(frame,frame.length);assert.equal(sanitizeMp3Stream(twoFrames).body.length,twoFrames.length);
-const vbrLike=new Uint8Array(frame.length+makeFrame(0xa0).length);vbrLike.set(frame);vbrLike.set(makeFrame(0xa0),frame.length);assert.throws(()=>sanitizeMp3Stream(vbrLike),/CBR/,'mixed bitrates in one clip must be rejected');
+const frame160=makeFrame(0xa0),vbrLike=new Uint8Array(frame.length+frame160.length);vbrLike.set(frame);vbrLike.set(frame160,frame.length);assert.throws(()=>sanitizeMp3Stream(vbrLike),/CBR/,'mixed bitrates in one clip must be rejected');
 
 const generator=fs.readFileSync(new URL('../assets/question-bank/bank-generator.js',import.meta.url),'utf8');
 const listeningMigration=fs.readFileSync(new URL('../supabase/migrations/20260926163840_question_bank_listening_and_stats.sql',import.meta.url),'utf8');
