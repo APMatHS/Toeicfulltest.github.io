@@ -17,6 +17,7 @@ import { createAuthoringController } from "./tests/authoring.js";
 import { createQuestionBankListController } from "./question-bank/bank-list.js";
 import { createQuestionBankEditorController } from "./question-bank/bank-editor.js";
 import { createQuestionBankMediaService } from "./question-bank/bank-media.js";
+import { createQuestionBankGeneratorController } from "./question-bank/bank-generator.js";
 
 const sb=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);
 const {uploadMedia,signedUrl,signedUrlMap,removeMedia}=createMediaService(sb);
@@ -88,6 +89,7 @@ let authoringController;
 let accountsController;
 let classesController;
 let questionBank;
+let bankGenerator;
 
 const examApp=createExamApp({sb,modalRoot,signedUrlMap,toast,closeModal,showLoading,staffNav,getSession:()=>session,getProfile:()=>profile,getView:()=>view});
 const {renderStudent,renderStaffPracticeResult,renderResult}=examApp;
@@ -106,8 +108,9 @@ const antiCheat=createAntiCheatController({
 examCoordinator.setAntiCheat(antiCheat);
 
 const staffResults=createStaffResultsController({sb,esc,fmt,statusBadge,toast,getWorkspace:()=>testState.workspace,setLiveChannel:channel=>{liveChannel=channel;},clearLiveChannel,refreshCurrentTest:(id,tab)=>testWorkspaceController.refreshCurrentTest(id,tab)});
-authoringController=createAuthoringController({sb,modalRoot,uploadMedia,signedUrl,signedUrlMap,toast,closeModal,getSession:()=>session,getWorkspaceController:()=>testWorkspaceController});
+authoringController=createAuthoringController({sb,modalRoot,uploadMedia,signedUrl,signedUrlMap,toast,closeModal,getSession:()=>session,getWorkspaceController:()=>testWorkspaceController,getBankGenerator:()=>bankGenerator});
 testWorkspaceController=createTestWorkspaceController({sb,modalRoot,toast,closeModal,showLoading,staffNav,clearLiveChannel,invalidateStaffData,invalidateStaffPage,showStaffPage,getView:()=>view,getSession:()=>session,getStaffResults:()=>staffResults,getAuthoringController:()=>authoringController,testState,uploadMedia,signedUrl,removeMedia});
+bankGenerator=createQuestionBankGeneratorController({sb,modalRoot,toast,closeModal,bankMedia,uploadMedia,removeMedia,onCommitted:async data=>{const id=data?.test_id;if(!id)return;testWorkspaceController.invalidateTestWorkspace(id);await testWorkspaceController.renderTestDetail(id,"authoring");}});
 accountsController=createAccountsController({sb,modalRoot,toast,closeModal,showLoading,staffNav,prefetchStaffData,getStaffDataCache,invalidateStaffData,invalidateStaffPage,showStaffPage,getView:()=>view,getClassController:()=>classesController});
 classesController=createClassesController({sb,modalRoot,toast,closeModal,showLoading,staffNav,prefetchStaffData,getStaffDataCache,invalidateStaffData,invalidateStaffPage,showStaffPage,getView:()=>view,getSession:()=>session,getAccountsController:()=>accountsController});
 const dashboard=createDashboardController({showLoading,staffNav,prefetchStaffData,getStaffDataCache,getView:()=>view,getProfile:()=>profile});
