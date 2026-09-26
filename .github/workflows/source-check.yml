@@ -24,5 +24,7 @@ jobs:
         run: node tools/smoke-audio-sync.mjs
       - name: Question bank generator smoke
         run: node tools/smoke-bank-generator.mjs
+      - name: Question bank Listening smoke
+        run: node tools/smoke-bank-listening.mjs
       - name: Migration static check
         run: node tools/check-migration.mjs
