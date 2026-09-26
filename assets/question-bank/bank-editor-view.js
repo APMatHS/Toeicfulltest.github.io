@@ -8,9 +8,10 @@ export function metadataFields(item={}){
   const status=item.status||"draft";
   return `<div class="form-grid">
     <label>Part
-      <select name="part_no" ${coded?"disabled":""}>
+      <select name="part_no" disabled>
         ${[5,6,7].map(p=>`<option value="${p}" ${Number(item.part_no||5)===p?"selected":""}>Part ${p}</option>`).join("")}
       </select>
+      <span class="hint">Part được chọn khi tạo để giữ đúng cấu trúc câu/group.</span>
     </label>
     <label>Trạng thái
       <select name="status">
