@@ -13,8 +13,10 @@ const frame48=Uint8Array.from([0xff,0xfb,0x94,0x64,1,2,3,4]);
 assert.notEqual(mp3Signature(frame).key,mp3Signature(frame48).key,'different sample rates must have different packaging signatures');
 
 const generator=fs.readFileSync(new URL('../assets/question-bank/bank-generator.js',import.meta.url),'utf8');
-const materializer=fs.readFileSync(new URL('../supabase/migrations/20260926163840_question_bank_listening_and_stats.sql',import.meta.url),'utf8');
+const listeningMigration=fs.readFileSync(new URL('../supabase/migrations/20260926163840_question_bank_listening_and_stats.sql',import.meta.url),'utf8');
+const statsMigration=fs.readFileSync(new URL('../supabase/migrations/20260926165143_question_bank_incremental_stats.sql',import.meta.url),'utf8');
 for(const token of ['packageListeningAudio','staff_set_listening_audio_v118b','Listening phải được tạo trọn bộ một lần'])assert.ok(generator.includes(token),`missing Listening generator contract: ${token}`);
-for(const token of ["bs.media_type='audio'","Part 1 requires an image","bank_attempt_stats_refresh"])assert.ok(materializer.includes(token),`missing Listening/stat migration contract: ${token}`);
+for(const token of ["bs.media_type='audio'","Part 1 requires an image"])assert.ok(listeningMigration.includes(token),`missing Listening migration contract: ${token}`);
+for(const token of ['bank_attempt_stats_update','bank_attempt_stats_delete','bank_apply_attempt_stats'])assert.ok(statsMigration.includes(token),`missing incremental stats contract: ${token}`);
 
-console.log('Question-bank Listening smoke OK: MP3 tags/signatures, master-audio wiring, and migration contracts.');
+console.log('Question-bank Listening smoke OK: MP3 tags/signatures, master-audio wiring, and incremental statistics.');
