@@ -30,6 +30,7 @@
     "staff_get_test_submissions_v121",
     "staff_get_test_workspace_v122",
     "staff_list_practice_attempts",
+    "staff_materialize_bank_selection",
     "staff_preflight_test",
     "staff_preflight_test_v120",
     "staff_reset_attempt",
