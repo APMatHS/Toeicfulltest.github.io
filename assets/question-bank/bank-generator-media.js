@@ -3,8 +3,10 @@ import { embeddedImagePaths } from "../modules/rich-editor.js";
 const unique=a=>[...new Set((a||[]).filter(Boolean))];
 
 function detailPaths(detail){
+  const part=Number(detail.item?.part_no||0);
   const values=[...(detail.stimuli||[]).map(x=>x.content),...(detail.questions||[]).flatMap(q=>[q.content,...(q.choices||[]).map(c=>c.content)])];
-  const direct=[...(detail.stimuli||[]).map(x=>x.storage_path),...(detail.questions||[]).flatMap(q=>[q.storage_path,...(q.choices||[]).map(c=>c.storage_path)])];
+  const stimulusPaths=(detail.stimuli||[]).filter(x=>!(part>=1&&part<=4&&x.media_type==="audio")).map(x=>x.storage_path);
+  const direct=[...stimulusPaths,...(detail.questions||[]).flatMap(q=>[q.storage_path,...(q.choices||[]).map(c=>c.storage_path)])];
   return unique([...direct,...values.flatMap(v=>embeddedImagePaths(v||""))]);
 }
 
