@@ -1,10 +1,15 @@
 const BUCKET="bank-media";
 const SIGNED_URL_TTL=6*60*60;
 const MAX_IMAGE_BYTES=20*1024*1024;
+const MAX_MEDIA_BYTES=50*1024*1024;
 
 function ext(name=""){
-  const m=String(name).toLowerCase().match(/\.(png|jpe?g|webp)$/);
+  const m=String(name).toLowerCase().match(/\.(png|jpe?g|webp|mp3|mp4|m4a|wav|aac|ogg)$/);
   return m?m[0].replace(".jpeg",".jpg"):"";
+}
+
+function allowedType(type=""){
+  return ["image/png","image/jpeg","image/webp","audio/mpeg","audio/mp4","audio/wav","audio/x-m4a","audio/aac","audio/ogg"].includes(type);
 }
 
 export function createQuestionBankMediaService(sb){
@@ -38,16 +43,23 @@ export function createQuestionBankMediaService(sb){
     return out;
   }
 
-  async function uploadImage(file){
-    if(!(file instanceof File)||!file.size)throw new Error("Không có ảnh để tải lên.");
-    if(!["image/png","image/jpeg","image/webp"].includes(file.type))throw new Error("Ngân hàng hỗ trợ ảnh PNG, JPG hoặc WebP.");
-    if(file.size>MAX_IMAGE_BYTES)throw new Error("Ảnh quá lớn. Vui lòng dùng ảnh không quá 20 MB.");
-    const suffix=ext(file.name)||({"image/png":".png","image/jpeg":".jpg","image/webp":".webp"}[file.type]||"");
-    const path=`rich/${crypto.randomUUID()}${suffix}`;
+  async function uploadFile(file,prefix="media"){
+    if(!(file instanceof File)||!file.size)throw new Error("Không có file để tải lên.");
+    if(!allowedType(file.type))throw new Error("Định dạng media chưa được hỗ trợ trong ngân hàng.");
+    if(file.size>MAX_MEDIA_BYTES)throw new Error("Media quá lớn. Vui lòng dùng file không quá 50 MB.");
+    if(file.type.startsWith("image/")&&file.size>MAX_IMAGE_BYTES)throw new Error("Ảnh quá lớn. Vui lòng dùng ảnh không quá 20 MB.");
+    const suffix=ext(file.name)||({"image/png":".png","image/jpeg":".jpg","image/webp":".webp","audio/mpeg":".mp3","audio/mp4":".mp4","audio/x-m4a":".m4a","audio/wav":".wav","audio/aac":".aac","audio/ogg":".ogg"}[file.type]||"");
+    const path=`${prefix}/${crypto.randomUUID()}${suffix}`;
     const {error}=await sb.storage.from(BUCKET).upload(path,file,{cacheControl:"3600",upsert:false,contentType:file.type});
     if(error)throw error;
     return {storage_path:path,url:await signedUrl(path)};
   }
 
-  return {uploadImage,signedUrl,signedUrlMap};
+  async function uploadImage(file){
+    if(!(file instanceof File)||!file.size)throw new Error("Không có ảnh để tải lên.");
+    if(!file.type.startsWith("image/"))throw new Error("Vui lòng chọn file ảnh.");
+    return uploadFile(file,"rich");
+  }
+
+  return {uploadFile,uploadImage,signedUrl,signedUrlMap};
 }
