@@ -40,7 +40,7 @@ export function renderAuthoringMarkup(id,parts,questions,groups,draft,locked=fal
   return `<section class="card authoring">
     <div class="row between wrap">
       <div><h2>Soạn đề</h2><p class="muted">Nội dung đề hiển thị đầy đủ để rà trực tiếp; sửa tại chỗ bằng nút Sửa.</p></div>
-      <div class="authoring-top-actions"><span id="draftStatus" class="muted">${locked?"Đề đã khóa":draft?"Có bản nháp":"Đã đồng bộ"}</span>${(!locked&&draft)?'<button class="secondary sm" id="restoreDraft">Khôi phục nháp</button><button class="ghost sm" id="discardDraft">Bỏ nháp</button>':""}<button class="secondary sm ai-later" type="button" disabled title="Chức năng sẽ triển khai ở bản sau">✨ AI kiểm tra — Bản sau</button></div>
+      <div class="authoring-top-actions"><span id="draftStatus" class="muted">${locked?"Đề đã khóa":draft?"Có bản nháp":"Đã đồng bộ"}</span>${(!locked&&draft)?'<button class="secondary sm" id="restoreDraft">Khôi phục nháp</button><button class="ghost sm" id="discardDraft">Bỏ nháp</button>':""}${locked?'<button class="secondary sm" type="button" disabled>🧩 Tạo từ ngân hàng</button>':'<button class="primary sm" type="button" id="generateFromBank">🧩 Tạo từ ngân hàng</button>'}</div>
     </div>
     ${locked?'<div class="lock-banner"><b>🔒 Không thể sửa nội dung</b><span>Đề đã khóa từ khi sinh viên đầu tiên bắt đầu. Nếu xóa hết lượt làm thật, hệ thống có thể mở khóa lại theo quy tắc quản trị.</span></div>':""}
     <div class="authoring-tools">
