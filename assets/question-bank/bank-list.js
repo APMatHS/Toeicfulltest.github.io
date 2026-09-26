@@ -15,7 +15,7 @@ function tagText(values,max=3){const list=Array.isArray(values)?values.filter(Bo
 function statsOf(item){const raw=item.bank_item_stats;return Array.isArray(raw)?(raw[0]||{}):(raw||{});}
 
 export function createQuestionBankListController(ctx){
-  const {sb,toast,getSession,getView,getEditor}=ctx;
+  const {sb,toast,getSession,getView,getEditor,getImporter}=ctx;
   let requestSeq=0;
 
   function storageKey(){return `toeic.questionBank.filters.${getSession()?.user?.id||"anon"}`;}
@@ -94,11 +94,12 @@ export function createQuestionBankListController(ctx){
     view.querySelector("#bankReload")?.addEventListener("click",()=>{loadSummary();loadItems({keepPage:true});});
     view.querySelector("#bankResetFilters")?.addEventListener("click",()=>{state={...DEFAULT_STATE};saveState();renderBank();});
     view.querySelector("#bankCreate")?.addEventListener("click",()=>getEditor().chooseCreate());
+    view.querySelector("#bankImportWord")?.addEventListener("click",()=>getImporter().open());
   }
 
   async function renderBank(){
     state=loadState();const view=getView();
-    view.innerHTML=`<section class="card"><div class="row between wrap"><div><h1>Ngân hàng câu hỏi</h1><p class="muted">Quản lý câu hỏi TOEIC theo Part, trạng thái, độ khó, dạng câu và lịch sử sử dụng.</p></div><div class="row wrap"><button id="bankResetFilters" class="ghost">Xóa bộ lọc</button><button id="bankReload" class="secondary">Làm mới</button><button id="bankCreate" class="primary">+ Tạo câu hỏi</button></div></div><div id="bankSummary" class="row wrap" style="margin:12px 0 18px"><span class="badge">Đang tải thống kê...</span></div>${filterShell()}<div id="bankList"></div></section>`;
+    view.innerHTML=`<section class="card"><div class="row between wrap"><div><h1>Ngân hàng câu hỏi</h1><p class="muted">Quản lý câu hỏi TOEIC theo Part, trạng thái, độ khó, dạng câu và lịch sử sử dụng.</p></div><div class="row wrap"><button id="bankResetFilters" class="ghost">Xóa bộ lọc</button><button id="bankReload" class="secondary">Làm mới</button><button id="bankImportWord" class="secondary">Nhập Word</button><button id="bankCreate" class="primary">+ Tạo câu hỏi</button></div></div><div id="bankSummary" class="row wrap" style="margin:12px 0 18px"><span class="badge">Đang tải thống kê...</span></div>${filterShell()}<div id="bankList"></div></section>`;
     bindFilters();await Promise.all([loadSummary(),loadItems({keepPage:true})]);
   }
 
