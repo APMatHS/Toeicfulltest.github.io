@@ -15,9 +15,12 @@ import { createTestCreateController } from "./tests/test-create.js";
 import { createTestWorkspaceController } from "./tests/test-workspace.js";
 import { createAuthoringController } from "./tests/authoring.js";
 import { createQuestionBankListController } from "./question-bank/bank-list.js";
+import { createQuestionBankEditorController } from "./question-bank/bank-editor.js";
+import { createQuestionBankMediaService } from "./question-bank/bank-media.js";
 
 const sb=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);
 const {uploadMedia,signedUrl,signedUrlMap,removeMedia}=createMediaService(sb);
+const bankMedia=createQuestionBankMediaService(sb);
 const appView=document.querySelector("#view");
 const sessionActions=document.querySelector("#sessionActions");
 const staffHeaderNav=document.querySelector("#staffHeaderNav");
@@ -84,6 +87,7 @@ let testWorkspaceController;
 let authoringController;
 let accountsController;
 let classesController;
+let questionBank;
 
 const examApp=createExamApp({sb,modalRoot,signedUrlMap,toast,closeModal,showLoading,staffNav,getSession:()=>session,getProfile:()=>profile,getView:()=>view});
 const {renderStudent,renderStaffPracticeResult,renderResult}=examApp;
@@ -109,7 +113,8 @@ classesController=createClassesController({sb,modalRoot,toast,closeModal,showLoa
 const dashboard=createDashboardController({showLoading,staffNav,prefetchStaffData,getStaffDataCache,getView:()=>view,getProfile:()=>profile});
 const testCreate=createTestCreateController({sb,modalRoot,toast,closeModal,invalidateStaffData,invalidateStaffPage});
 const testList=createTestListController({sb,showLoading,staffNav,prefetchStaffData,getStaffDataCache,getView:()=>view,getTestCreate:()=>testCreate});
-const questionBank=createQuestionBankListController({sb,toast,getSession:()=>session,getView:()=>view});
+const bankEditor=createQuestionBankEditorController({sb,modalRoot,toast,closeModal,bankMedia,onSaved:()=>questionBank?.refresh()});
+questionBank=createQuestionBankListController({sb,toast,getSession:()=>session,getView:()=>view,getEditor:()=>bankEditor});
 const authPages=createAuthPages({sb,toast,showLoading,invalidateStaffData,invalidateStaffPage,renderHeader,getSession:()=>session,getProfile:()=>profile,setProfile:v=>{profile=v;},loadProfile,getView:()=>view,getRecoveryMode:()=>passwordRecoveryMode,setRecoveryMode:v=>{passwordRecoveryMode=v;},rerender:render});
 
 function requireStaff(fn){if(!session)return go("/login");if(!profile)return showLoading("Đang tải hồ sơ...");if(!["teacher","system_admin"].includes(profile.role))return go("/student");return fn();}
