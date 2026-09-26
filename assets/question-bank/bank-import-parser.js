@@ -33,7 +33,6 @@ function rangeFromText(text){
 }
 function questionFromText(text){const m=clean(text).match(/^(\d{1,3})\s*[.)]\s*/);return m?+m[1]:null;}
 function choiceFromText(text){const m=clean(text).match(/^\(?([A-D])\)?\s*[.)]\s*/i);return m?m[1].toUpperCase():null;}
-function htmlText(html){const doc=new DOMParser().parseFromString(String(html||""),"text/html");return clean(doc.body.textContent||"");}
 function stripLeading(html,re){
   const doc=new DOMParser().parseFromString(`<div>${html}</div>`,"text/html"),root=doc.body.firstElementChild;
   const walker=doc.createTreeWalker(root,NodeFilter.SHOW_TEXT);let node;
@@ -65,14 +64,14 @@ function normalizeQuestion(q){
 }
 
 function buildItems(blocks,fileName){
-  const groups=new Map(),standalone=[],loose=[],allQuestions=[];
+  const groups=new Map(),standalone=[],loose=[];
   let currentPart=0,currentGroup=null,currentQuestion=null,lastChoice=null;
   const ensureGroup=(range,title=null,automatic=false)=>{
     const key=`${range.start}-${range.end}`;if(!groups.has(key))groups.set(key,{range,title:title||`Questions ${key}`,automatic,passageParts:[],questions:[],issues:[]});return groups.get(key);
   };
   const flushQuestion=()=>{
     if(!currentQuestion)return;
-    const q=normalizeQuestion(currentQuestion);allQuestions.push(q);
+    const q=normalizeQuestion(currentQuestion);
     if(currentQuestion.group)currentQuestion.group.questions.push(q);else if(q.number>=101&&q.number<=130)standalone.push(q);else loose.push(q);
     currentQuestion=null;lastChoice=null;
   };
@@ -124,16 +123,21 @@ export async function parseQuestionBankWord(file,{bankMedia,onProgress}={}){
   if(!file||!/\.docx$/i.test(file.name))throw new Error("Vui lòng chọn file Word .docx.");
   const mammoth=await loadMammoth();if(typeof mammoth?.convertToHtml!=="function")throw new Error("Mammoth không hỗ trợ chuyển Word sang HTML.");
   const uploadedPaths=[];let imageNo=0;
-  const options={
-    styleMap:["u => u","strike => s"],includeDefaultStyleMap:true,
-    convertImage:mammoth.images.imgElement(async image=>{
-      const type=image.contentType||"image/jpeg",base64=await image.read("base64"),fileImage=base64File(base64,type,`word-${++imageNo}`);
-      onProgress?.(`Đang tải ảnh ${imageNo} từ Word…`);const up=await bankMedia.uploadFile(fileImage,"word-import");uploadedPaths.push(up.storage_path);return {src:up.url||""};
-    })
-  };
-  const result=await mammoth.convertToHtml({arrayBuffer:await file.arrayBuffer()},options),doc=new DOMParser().parseFromString(`<div id="converted">${result.value||""}</div>`,"text/html");
-  const imgs=[...doc.querySelectorAll("#converted img")];imgs.forEach((img,i)=>{const path=uploadedPaths[i];if(path)img.setAttribute("data-storage-path",path);});
-  const html=sanitizeRichHtml(doc.querySelector("#converted")?.innerHTML||"",{storage:false}),blocks=parseBlocks(html),items=buildItems(blocks,file.name);
-  if(!items.length)throw new Error("Không nhận diện được câu Part 5–7 nào trong file Word.");
-  return {items,uploadedPaths,messages:(result.messages||[]).map(x=>x.message).filter(Boolean)};
+  try{
+    const options={
+      styleMap:["u => u","strike => s"],includeDefaultStyleMap:true,
+      convertImage:mammoth.images.imgElement(async image=>{
+        const type=image.contentType||"image/jpeg",base64=await image.read("base64"),fileImage=base64File(base64,type,`word-${++imageNo}`);
+        onProgress?.(`Đang tải ảnh ${imageNo} từ Word…`);const up=await bankMedia.uploadFile(fileImage,"word-import");uploadedPaths.push(up.storage_path);return {src:up.url||""};
+      })
+    };
+    const result=await mammoth.convertToHtml({arrayBuffer:await file.arrayBuffer()},options),doc=new DOMParser().parseFromString(`<div id="converted">${result.value||""}</div>`,"text/html");
+    const imgs=[...doc.querySelectorAll("#converted img")];imgs.forEach((img,i)=>{const path=uploadedPaths[i];if(path)img.setAttribute("data-storage-path",path);});
+    const html=sanitizeRichHtml(doc.querySelector("#converted")?.innerHTML||"",{storage:false}),blocks=parseBlocks(html),items=buildItems(blocks,file.name);
+    if(!items.length)throw new Error("Không nhận diện được câu Part 5–7 nào trong file Word.");
+    return {items,uploadedPaths,messages:(result.messages||[]).map(x=>x.message).filter(Boolean)};
+  }catch(err){
+    if(uploadedPaths.length)try{await bankMedia.removePaths(uploadedPaths);}catch(cleanErr){console.warn("Không dọn được media Word sau lỗi parse",cleanErr);}
+    throw err;
+  }
 }
