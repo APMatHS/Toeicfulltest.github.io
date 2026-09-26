@@ -83,7 +83,7 @@ export async function packageListeningAudio({details,bankMedia,uploadMedia,testI
   const rows=listeningDetails(details);if(!rows.length)return null;
   const paths=rows.map(clipPath),urls=await bankMedia.signedUrlMap(paths),parts=[];let totalBytes=0,totalDuration=0,masterSignature=null;
   for(let i=0;i<rows.length;i++){
-    const detail=rows[i],path=paths[i],url=urls.get(path);
+    const detail=rows[i],path=paths[i],url=urls[path];
     onProgress?.({stage:"download",done:i,total:rows.length,code:detail.item?.public_code||""});
     if(!url)throw new Error(`Không tạo được liên kết clip ${detail.item?.public_code||path}.`);
     const response=await fetch(url,{cache:"no-store"});if(!response.ok)throw new Error(`Không tải được clip ${detail.item?.public_code||path} (HTTP ${response.status}).`);
