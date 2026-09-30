@@ -1,7 +1,7 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 import { SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY } from "../config.js";
-import { createQuestionBankMediaService } from "./bank-media.js";
-import { createQuestionBankListeningEditor } from "./bank-listening-editor.js";
+import { createQuestionBankMediaService } from "./bank-media.js?build=20260930-archive-audio";
+import { createQuestionBankListeningEditor } from "./bank-listening-editor.js?build=20260930-archive-audio";
 
 const sb=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY),modalRoot=document.querySelector("#modalRoot"),toastEl=document.querySelector("#toast"),bankMedia=createQuestionBankMediaService(sb);
 function closeModal(){modalRoot.innerHTML="";}

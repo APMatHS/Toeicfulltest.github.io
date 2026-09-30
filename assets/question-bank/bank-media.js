@@ -1,7 +1,12 @@
+import { SUPABASE_URL } from "../config.js";
+
 const BUCKET="bank-media";
 const SIGNED_URL_TTL=6*60*60;
 const MAX_IMAGE_BYTES=20*1024*1024;
 const MAX_MEDIA_BYTES=50*1024*1024;
+const ARCHIVE_UPLOAD_FUNCTION="archive-audio-upload";
+const isArchiveUrl=value=>/^https:\/\/archive\.org\/download\//i.test(String(value||""));
+const isExternalUrl=value=>/^https?:\/\//i.test(String(value||""));
 
 function ext(name=""){
   const m=String(name).toLowerCase().match(/\.(png|jpe?g|webp|mp3|mp4|m4a|wav|aac|ogg)$/);
@@ -17,6 +22,7 @@ export function createQuestionBankMediaService(sb){
 
   async function signedUrl(path){
     if(!path)return null;
+    if(isExternalUrl(path))return path;
     const hit=cache.get(path);
     if(hit&&hit.expiresAt>Date.now())return hit.url;
     const {data,error}=await sb.storage.from(BUCKET).createSignedUrl(path,SIGNED_URL_TTL);
@@ -29,6 +35,7 @@ export function createQuestionBankMediaService(sb){
   async function signedUrlMap(paths=[]){
     const unique=[...new Set(paths.filter(Boolean))],out={},missing=[];
     for(const path of unique){
+      if(isExternalUrl(path)){out[path]=path;continue;}
       const hit=cache.get(path);
       if(hit&&hit.expiresAt>Date.now())out[path]=hit.url;else missing.push(path);
     }
@@ -55,6 +62,28 @@ export function createQuestionBankMediaService(sb){
     return {storage_path:path,url:await signedUrl(path)};
   }
 
+  async function uploadArchiveAudio(file){
+    if(!(file instanceof File)||!file.size)throw new Error("Không có file để tải lên.");
+    if(!(file.type==="audio/mpeg"||/\.mp3$/i.test(file.name||"")))throw new Error("Clip Listening phải là MP3.");
+    if(file.size>MAX_MEDIA_BYTES)throw new Error("Audio quá lớn. Vui lòng dùng file không quá 50 MB.");
+    const {data:{session},error:sessionError}=await sb.auth.getSession();
+    if(sessionError||!session?.access_token)throw new Error("Phiên đăng nhập đã hết hạn.");
+    const endpoint=`${SUPABASE_URL}/functions/v1/${ARCHIVE_UPLOAD_FUNCTION}`;
+    const response=await fetch(endpoint,{
+      method:"POST",
+      headers:{
+        "Authorization":`Bearer ${session.access_token}`,
+        "Content-Type":"audio/mpeg",
+        "X-Audio-Filename":encodeURIComponent(file.name||"listening.mp3")
+      },
+      body:file
+    });
+    let payload={};try{payload=await response.json();}catch{}
+    if(!response.ok)throw new Error(payload?.error||`Upload Archive lỗi HTTP ${response.status}`);
+    if(!payload?.url)throw new Error("Archive không trả về URL audio.");
+    return {storage_path:payload.url,url:payload.url,provider:"archive",archive_identifier:payload.identifier,archive_filename:payload.filename};
+  }
+
   async function uploadImage(file){
     if(!(file instanceof File)||!file.size)throw new Error("Không có ảnh để tải lên.");
     if(!file.type.startsWith("image/"))throw new Error("Vui lòng chọn file ảnh.");
@@ -62,10 +91,10 @@ export function createQuestionBankMediaService(sb){
   }
 
   async function removePaths(paths=[]){
-    const unique=[...new Set(paths.filter(Boolean))];if(!unique.length)return;
+    const unique=[...new Set(paths.filter(Boolean))].filter(path=>!isExternalUrl(path));if(!unique.length)return;
     const {error}=await sb.storage.from(BUCKET).remove(unique);if(error)throw error;
     unique.forEach(path=>cache.delete(path));
   }
 
-  return {uploadFile,uploadImage,removePaths,signedUrl,signedUrlMap};
+  return {uploadFile,uploadArchiveAudio,uploadImage,removePaths,signedUrl,signedUrlMap};
 }

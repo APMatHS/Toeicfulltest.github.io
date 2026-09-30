@@ -74,7 +74,10 @@ export function createQuestionBankListeningEditor(ctx){
       if(kind==="image"&&!file.type.startsWith("image/")){input.value="";return toast("Vui lòng chọn file ảnh.",6000);}
       input.disabled=true;
       try{
-        const uploaded=await bankMedia.uploadFile(file,`listening/part${part}`);staged.add(uploaded.storage_path);
+        const uploaded=kind==="audio"
+          ? await bankMedia.uploadArchiveAudio(file)
+          : await bankMedia.uploadFile(file,`listening/part${part}`);
+        if(kind!=="audio")staged.add(uploaded.storage_path);
         form.elements.namedItem(`${key}_path`).value=uploaded.storage_path;
         await showPreview(form,key,uploaded.storage_path,kind);
       }catch(err){toast(err.message||String(err),7000);}finally{input.disabled=false;input.value="";}
