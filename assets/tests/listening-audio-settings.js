@@ -32,11 +32,11 @@ export function createListeningAudioSettings(ctx){
     const has=!!test.listening_audio_storage_path;
     const duration=Number(test.listening_audio_duration_seconds||0),limit=Number(test.duration_minutes||0)*60,tooLong=has&&duration>0&&limit>0&&duration>limit;
     return `<section class="card listening-master-settings">
-      <div class="row between wrap"><div><h2>Audio Listening Part 1–4</h2><p class="muted">Một file audio chung. Sinh viên bấm Bắt đầu nghe một lần; audio chạy liên tục, không pause, không tua và không nghe lại.</p></div><span class="status ${has?"ok":"warn"}">${has?"Đã có audio":"Chưa có audio"}</span></div>
+      <div class="row between wrap"><div><h2>Audio Listening Part 1–4</h2><p class="muted">Một file audio chung. File mới được chuyển sang Archive.org; Supabase Storage chỉ làm vùng tạm trong lúc tải. Sinh viên bấm Bắt đầu nghe một lần; audio chạy liên tục, không pause, không tua và không nghe lại.</p></div><span class="status ${has?"ok":"warn"}">${has?"Đã có audio":"Chưa có audio"}</span></div>
       ${has?`<div class="listening-audio-meta"><div><span class="muted">Tên file</span><b>${esc(test.listening_audio_filename||"Audio Listening")}</b></div><div><span class="muted">Thời lượng</span><b>${formatDuration(test.listening_audio_duration_seconds)}</b></div></div>${tooLong?`<div class="warning-box"><b>Audio dài hơn thời lượng bài kiểm tra (${test.duration_minutes} phút).</b><br>Hãy tăng thời lượng bài trước khi Publish.</div>`:""}<div id="listeningAudioTeacherPreview" class="listening-audio-preview muted">Đang tạo liên kết nghe thử…</div>`:'<div class="warning-box"><b>Cần tải 1 file audio trước khi xuất bản Listening/Full Test.</b><br>Không cần gắn audio riêng cho từng câu hoặc từng nhóm.</div>'}
       <div class="row wrap"><label class="btn ${has?"secondary":"primary"} ${locked?"disabled":""}">${has?"Thay file audio":"Tải audio"}<input id="listeningAudioUpload" type="file" accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/aac,audio/ogg,.mp3,.m4a,.wav,.aac,.ogg" ${locked?"disabled":""} hidden></label>${has?`<button type="button" class="danger" id="removeListeningAudio" ${locked?"disabled":""}>Xóa audio</button>`:""}</div>
       <div id="listeningAudioUploadProgress" class="listening-upload-progress" hidden><progress max="100" value="0" style="width:min(100%,480px)"></progress> <b data-progress-text>0%</b><div class="muted small" data-progress-note></div></div>
-      ${locked?'<p class="muted small">🔒 Audio đã khóa vì đã có sinh viên bắt đầu bài.</p>':`<p class="muted small">Nên dùng MP3/M4A. Tối đa ${formatBytes(MAX_AUDIO_UPLOAD_BYTES)}. File trên 6 MB dùng resumable upload trực tiếp tới Supabase Storage.</p>`}
+      ${locked?'<p class="muted small">🔒 Audio đã khóa vì đã có sinh viên bắt đầu bài.</p>':`<p class="muted small">Nên dùng MP3/M4A. Tối đa ${formatBytes(MAX_AUDIO_UPLOAD_BYTES)}. File trên 6 MB dùng resumable upload vào vùng tạm Supabase, sau đó backend chuyển sang Archive.org.</p>`}
     </section>`;
   }
 
@@ -83,12 +83,25 @@ export function createListeningAudioSettings(ctx){
       let uploaded=null;
       try{
         const duration=await audioDuration(file);
-        uploaded=await uploadMedia(file,`tests/${test.id}/listening-master`,{onProgress:updateProgress});
-        const {error}=await sb.rpc("staff_set_listening_audio_v118b",{p_test_id:test.id,p_storage_path:uploaded.storage_path,p_filename:file.name,p_duration_seconds:duration||null});
+        uploaded=await uploadMedia(file,`tests/${test.id}/archive-staging`,{onProgress:updateProgress});
+        if(progressNote)progressNote.textContent="Đã tải vùng tạm · đang chuyển audio sang Archive.org…";
+        if(label?.childNodes?.[0])label.childNodes[0].textContent="Đang chuyển sang Archive.org…";
+        const {data,error}=await sb.functions.invoke("archive-audio",{body:{
+          action:"upload",
+          test_id:test.id,
+          storage_path:uploaded.storage_path,
+          filename:file.name,
+          duration_seconds:duration||null
+        }});
         if(error)throw error;
+        if(!data?.ok)throw new Error(data?.error||"Archive.org chưa nhận được audio.");
+        uploaded=null;
         updateProgress({percent:100,uploaded:file.size,total:file.size,method:file.size>6*1024*1024?"resumable":"standard",status:"done"});
-        if(progressNote)progressNote.textContent=`Hoàn tất · ${formatBytes(file.size)} · đã lưu an toàn`;
-        toast("Đã lưu audio chung cho Listening Part 1–4");await onUpdated?.();
+        if(progressNote)progressNote.textContent=data.archive_ready
+          ?`Hoàn tất · ${formatBytes(file.size)} · audio đang phục vụ từ Archive.org`
+          :`Archive.org đã nhận file · ${formatBytes(file.size)} · liên kết công khai đang được đồng bộ`;
+        toast(data.archive_ready?"Đã chuyển audio Listening sang Archive.org":"Archive.org đã nhận audio; liên kết có thể cần thêm ít phút để sẵn sàng",6500);
+        await onUpdated?.();
       }catch(err){
         if(uploaded?.storage_path)removeMedia?.(uploaded.storage_path).catch(()=>{});
         if(progress){progress.hidden=false;if(progressNote)progressNote.textContent=`Tải audio chưa hoàn tất: ${err.message||err}`;}
@@ -101,9 +114,13 @@ export function createListeningAudioSettings(ctx){
     if(remove)remove.onclick=async()=>{
       if(!confirm("Xóa file audio chung của Listening Part 1–4? Bài sẽ không thể Publish cho đến khi tải audio mới."))return;
       remove.disabled=true;remove.textContent="Đang xóa…";
-      const {error}=await sb.rpc("staff_set_listening_audio_v118b",{p_test_id:test.id,p_storage_path:null,p_filename:null,p_duration_seconds:null});
-      if(error){remove.disabled=false;remove.textContent="Xóa audio";return toast(error.message,6000);}
-      toast("Đã gỡ audio Listening khỏi bài kiểm tra");await onUpdated?.();
+      const {data,error}=await sb.functions.invoke("archive-audio",{body:{action:"remove",test_id:test.id}});
+      if(error||!data?.ok){
+        remove.disabled=false;remove.textContent="Xóa audio";
+        return toast(error?.message||data?.error||"Không gỡ được audio.",7000);
+      }
+      toast(data.cleanup_warning?"Đã gỡ audio khỏi bài; file cũ sẽ được dọn riêng":"Đã gỡ audio Listening khỏi bài kiểm tra");
+      await onUpdated?.();
     };
   }
 
