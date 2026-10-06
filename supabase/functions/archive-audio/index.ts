@@ -123,9 +123,18 @@ async function deleteArchiveFile(path: string, access: string, secret: string) {
   return "Archive cleanup HTTP " + res.status;
 }
 
-async function cleanupOldMedia(admin: any, path: string | null, access: string, secret: string) {
+async function cleanupOldMedia(admin: any, path: string | null, access: string, secret: string, excludeTestId: string) {
   if (!path) return null;
-  if (path.startsWith("archive:")) return await deleteArchiveFile(path, access, secret);
+  const { count, error: refError } = await admin.from("tests")
+    .select("id", { count: "exact", head: true })
+    .eq("listening_audio_storage_path", path)
+    .neq("id", excludeTestId);
+  if (refError) return "Không kiểm tra được tham chiếu audio cũ: " + refError.message;
+  if ((count || 0) > 0) return null;
+  if (path.startsWith("archive:")) {
+    if (!access || !secret) return "Thiếu Archive.org secret nên chưa dọn được file cũ";
+    return await deleteArchiveFile(path, access, secret);
+  }
   if (path.startsWith("static:") || /^https?:\/\//i.test(path)) return null;
   const { error } = await admin.storage.from("test-media").remove([path]);
   return error?.message || null;
@@ -210,7 +219,7 @@ Deno.serve(async (req) => {
       p_duration_seconds: null
     });
     if (error) return json({ error: error.message }, 400);
-    const warning = await cleanupOldMedia(admin, test.listening_audio_storage_path, creds.access, creds.secret);
+    const warning = await cleanupOldMedia(admin, test.listening_audio_storage_path, creds.access, creds.secret, testId);
     return json({ ok: true, cleanup_warning: warning || null });
   }
 
@@ -298,7 +307,7 @@ Deno.serve(async (req) => {
 
   const { error: stagingCleanupError } = await admin.storage.from("test-media").remove([stagingPath]);
   const oldCleanup = test.listening_audio_storage_path && test.listening_audio_storage_path !== storedPath
-    ? await cleanupOldMedia(admin, test.listening_audio_storage_path, creds.access, creds.secret)
+    ? await cleanupOldMedia(admin, test.listening_audio_storage_path, creds.access, creds.secret, testId)
     : null;
 
   return json({
