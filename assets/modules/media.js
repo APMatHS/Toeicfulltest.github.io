@@ -19,6 +19,17 @@ export const MAX_AUDIO_UPLOAD_BYTES=50*1024*1024;
 const TUS_CHUNK_BYTES=6*1024*1024;
 let tusPromise=null;
 
+export function archiveMediaUrl(path=""){
+  const raw=String(path||"");
+  if(!raw.startsWith("archive:"))return null;
+  const rest=raw.slice("archive:".length),slash=rest.indexOf("/");
+  if(slash<=0||slash===rest.length-1)return null;
+  const identifier=rest.slice(0,slash),filename=rest.slice(slash+1);
+  if(!/^[A-Za-z0-9._-]+$/.test(identifier)||!filename)return null;
+  const safeFile=filename.split("/").filter(Boolean).map(encodeURIComponent).join("/");
+  return safeFile?`https://archive.org/download/${encodeURIComponent(identifier)}/${safeFile}`:null;
+}
+
 function canvasToBlob(canvas,type,quality){
   return new Promise(resolve=>canvas.toBlob(resolve,type,quality));
 }
@@ -206,6 +217,7 @@ export function createMediaService(sb){
 
   async function signedUrl(path){
     if(!path) return null;
+    const archiveUrl=archiveMediaUrl(path);if(archiveUrl)return archiveUrl;
     const cached=cachedSignedUrl(path);if(cached)return cached;
     const {data,error}=await sb.storage.from("test-media").createSignedUrl(path,SIGNED_URL_TTL_SECONDS);
     return error ? null : rememberSignedUrl(path,data?.signedUrl||null);
@@ -215,7 +227,11 @@ export function createMediaService(sb){
     const unique=[...new Set(paths.filter(Boolean))];
     if(!unique.length) return {};
     const out={},missing=[];
-    for(const path of unique){const cached=cachedSignedUrl(path);if(cached)out[path]=cached;else missing.push(path);}
+    for(const path of unique){
+      const archiveUrl=archiveMediaUrl(path);
+      if(archiveUrl)out[path]=archiveUrl;
+      else{const cached=cachedSignedUrl(path);if(cached)out[path]=cached;else missing.push(path);}
+    }
     if(missing.length){
       const {data}=await sb.storage.from("test-media").createSignedUrls(missing,SIGNED_URL_TTL_SECONDS);
       for(const item of data||[]){if(item.signedUrl)out[item.path]=rememberSignedUrl(item.path,item.signedUrl);}
@@ -224,7 +240,7 @@ export function createMediaService(sb){
   }
 
   async function removeMedia(path){
-    if(!path) return;
+    if(!path||archiveMediaUrl(path)) return;
     const {error}=await sb.storage.from("test-media").remove([path]);
     if(error) throw error;
     signedUrlCache.delete(path);
